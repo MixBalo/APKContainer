@@ -2,9 +2,7 @@ name: Build APKLive IPA
 
 on:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
   pull_request:
   workflow_dispatch:
 
@@ -32,63 +30,13 @@ jobs:
           brew install xcodegen
           xcodegen --version
 
-      # -----------------------------------------------------------------------
-      # 1. Cache the ANGLE libraries so we don't rebuild them every run
-      # -----------------------------------------------------------------------
-      - name: Cache ANGLE libraries
-        id: cache-angle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ github.workspace }}/Native/ANGLE/lib/libEGL.a
-            ${{ github.workspace }}/Native/ANGLE/lib/libGLESv2.a
-          # Bump the version (v1 → v2) when you want CI to rebuild ANGLE
-          key: angle-ios-arm64-v1
-
-      # -----------------------------------------------------------------------
-      # 2. Build ANGLE for iOS (only runs on cache miss)
-      # -----------------------------------------------------------------------
-      - name: Build ANGLE for iOS
-        if: steps.cache-angle.outputs.cache-hit != 'true'
+      - name: Verify ANGLE libraries exist
         run: |
-          set -e
-          echo "=== Installing depot_tools ==="
-          git clone --depth=1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$HOME/depot_tools"
-          export PATH="$HOME/depot_tools:$PATH"
+          ls -lh Native/ANGLE/lib/libEGL.a
+          ls -lh Native/ANGLE/lib/libGLESv2.a
 
-          echo "=== Fetching ANGLE source ==="
-          mkdir -p "$HOME/angle-work"
-          cd "$HOME/angle-work"
-          fetch angle
-
-          echo "=== Workaround: fake macOS 15 SDK symlink ==="
-          sudo ln -sf /Applications/Xcode_15.4.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk \
-            /Applications/Xcode_15.4.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk
-
-          echo "=== Generating iOS build files ==="
-          cd src
-          gn gen out/ios --args='
-            target_os="ios"
-            target_cpu="arm64"
-            target_environment="device"
-            is_debug=false
-            ios_enable_code_signing=false
-            angle_enable_vulkan=false
-            angle_enable_gl=false
-            angle_enable_metal=true
-          '
-
-          echo "=== Building ANGLE ==="
-          autoninja -C out/ios libEGL_static libGLESv2_static
-
-          echo "=== Copying libraries into project ==="
-          mkdir -p "${{ github.workspace }}/Native/ANGLE/lib"
-          cp out/ios/libEGL_static.a  "${{ github.workspace }}/Native/ANGLE/lib/libEGL.a"
-          cp out/ios/libGLESv2_static.a "${{ github.workspace }}/Native/ANGLE/lib/libGLESv2.a"
-          
       - name: Generate Xcode project
-        run: |
-          xcodegen generate
+        run: xcodegen generate
 
       - name: Build unsigned application
         run: |
@@ -114,11 +62,8 @@ jobs:
             find build/DerivedData -name "*.app" -print
             exit 1
           fi
-          echo "Built:"
-          echo "$APP_PATH"
-          /usr/libexec/PlistBuddy \
-            -c "Print :CFBundleIdentifier" \
-            "$APP_PATH/Info.plist"
+          echo "Built: $APP_PATH"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP_PATH/Info.plist"
 
       - name: Create unsigned IPA
         run: |
@@ -130,7 +75,7 @@ jobs:
           cd build/IPA
           zip -qry ../APKLive.ipa Payload
           cd ../..
-          echo "Created:"
+          echo "Created: build/APKLive.ipa"
           ls -lh build/APKLive.ipa
 
       - name: Verify IPA structure
