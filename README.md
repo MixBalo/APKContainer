@@ -6,7 +6,7 @@ A LiveContainer-style iOS app that installs and runs Android `.apk` packages on-
 
 ## Status
 
-⚠️ Early / architecture stage. See the [capability matrix](#capability-matrix) below for what actually works today.
+⚠️ Early / architecture stage. See the [capability matrix](docs/CAPABILITY_MATRIX.md) below for what actually works today.
 
 ## Why this is hard (read before filing issues)
 
@@ -38,25 +38,6 @@ Build order:
 4. **Graphics bridge** — EGL/OpenGL ES shim whose `eglSwapBuffers` etc. render into a `CAMetalLayer`, via GL→Metal translation (e.g. adapting ANGLE) or draw-call interception. This is the most CPU/GPU-costly piece and the one that determines whether a game renders at all vs. black-screens.
 5. **Input/audio/lifecycle bridging** — touch → `MotionEvent` equivalents, audio buffers → `AVAudioEngine`, Activity lifecycle driven by the container UI.
 6. **Container UI** — SwiftUI: grid of installed apps, `.apk` import via document picker, tap-to-launch full-screen container view, per-app detail/uninstall, running-apps list if backgrounding is supported.
-
-## Capability matrix
-
-Keep this current — it's the honest source of truth for what works.
-
-| Component | Status | Notes |
-|---|---|---|
-| APK parsing / install | ☐ Not started | |
-| Manifest / DEX parsing | ☐ Not started | |
-| DEX interpreter | ☐ Not started | |
-| `android.*` framework coverage | ☐ Not started | List implemented classes here as they land |
-| Bionic libc shim | ☐ Not started | |
-| Native `.so` ELF loader | ☐ Not started | |
-| JNI bridge | ☐ Not started | |
-| EGL → Metal graphics bridge | ☐ Not started | |
-| Touch input | ☐ Not started | |
-| Audio | ☐ Not started | |
-| Activity lifecycle | ☐ Not started | |
-| Container UI | ☐ Not started | |
 
 ## Benchmark target
 
