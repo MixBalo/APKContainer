@@ -1,0 +1,109 @@
+name: Build APKLive IPA
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build unsigned IPA
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 15.4
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "15.4"
+
+      - name: Show versions
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Install XcodeGen
+        run: |
+          brew install xcodegen
+          xcodegen --version
+
+      - name: Generate Xcode project
+        run: |
+          xcodegen generate
+
+      - name: Build unsigned application
+        run: |
+          set -o pipefail
+
+          mkdir -p build
+
+          xcodebuild \
+            -project APKContainer.xcodeproj \
+            -scheme APKContainer \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$PWD/build/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build | tee build/xcodebuild.log
+
+      - name: Verify application
+        run: |
+          APP_PATH="build/DerivedData/Build/Products/Release-iphoneos/APKContainer.app"
+
+          if [ ! -d "$APP_PATH" ]; then
+            echo "::error::APKContainer.app was not produced"
+            find build/DerivedData -name "*.app" -print
+            exit 1
+          fi
+
+          echo "Built:"
+          echo "$APP_PATH"
+
+          /usr/libexec/PlistBuddy \
+            -c "Print :CFBundleIdentifier" \
+            "$APP_PATH/Info.plist"
+
+      - name: Create unsigned IPA
+        run: |
+          set -e
+
+          APP_PATH="build/DerivedData/Build/Products/Release-iphoneos/APKContainer.app"
+
+          rm -rf build/IPA
+          mkdir -p build/IPA/Payload
+
+          cp -R "$APP_PATH" build/IPA/Payload/
+
+          cd build/IPA
+          zip -qry ../APKLive.ipa Payload
+
+          cd ../..
+          echo "Created:"
+          ls -lh build/APKLive.ipa
+
+      - name: Verify IPA structure
+        run: |
+          unzip -l build/APKLive.ipa | head -50
+
+          if ! unzip -l build/APKLive.ipa | grep -q "Payload/APKContainer.app/"; then
+            echo "::error::Invalid IPA: missing Payload/APKContainer.app"
+            exit 1
+          fi
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: APKLive-unsigned-IPA
+          path: |
+            build/APKLive.ipa
+            build/xcodebuild.log
+          if-no-files-found: error
+          retention-days: 30
