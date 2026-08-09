@@ -21,7 +21,7 @@ public final class DistributionProbe {
 
     public init() {}
 
-    /// Distribution channel that APKLive appears to be running under.
+    /// Distribution channel that APKContainer appears to be running under.
     public enum Kind: String, Sendable {
         case trollStore
         case jailbreak
@@ -44,7 +44,7 @@ public final class DistributionProbe {
     }
 
     private func detectSync() -> Kind {
-        // 1. Check for the entitlements normally required by the runtime.
+        // 1. Check for entitlements normally associated with the runtime.
         if hasTrollStoreEntitlements() {
             return .trollStore
         }
@@ -74,42 +74,33 @@ public final class DistributionProbe {
         return required.isSubset(of: present)
     }
 
+    /// Reads the current process's task entitlements.
+    ///
+    /// `SecCode`, `SecCodeCopySelf`, and related APIs are macOS code-signing
+    /// APIs and are not available to an iOS target. `SecTask` is the
+    /// appropriate Security.framework API for querying the current task.
     private func currentEntitlements() -> [String: Any]? {
-        var code: SecCode?
-
-        let status = SecCodeCopySelf(
-            kSecCSDefaultFlags,
-            &code
-        )
-
-        guard status == errSecSuccess, let code else {
+        guard let task = SecTaskCreateFromSelf(nil) else {
             return nil
         }
 
-        var info: CFDictionary?
+        let keys = [
+            "com.apple.security.cs.allow-jit",
+            "com.apple.security.cs.allow-unsigned-executable-memory"
+        ]
 
-        let infoStatus = SecCodeCopySigningInformation(
-            code,
-            kSecCSSigningInformation,
-            &info
-        )
+        var result: [String: Any] = [:]
 
-        guard infoStatus == errSecSuccess,
-              let info
-        else {
-            return nil
+        for key in keys {
+            if let value = SecTaskCopyValue(
+                task,
+                key as CFString
+            ) {
+                result[key] = value
+            }
         }
 
-        let dictionary = info as NSDictionary
-
-        guard let entitlements =
-                dictionary[kSecCodeInfoEntitlementsDict as String]
-                as? [String: Any]
-        else {
-            return nil
-        }
-
-        return entitlements
+        return result.isEmpty ? nil : result
     }
 
     // MARK: - Jailbreak
@@ -135,11 +126,17 @@ public final class DistributionProbe {
         }
 
         // Best-effort filesystem escape test.
+        //
+        // On a normal sandboxed iOS application this should fail.
         let testPath = "/private/apkcontainer_jailbreak_test"
 
         do {
             let data = Data("test".utf8)
-            try data.write(to: URL(fileURLWithPath: testPath))
+
+            try data.write(
+                to: URL(fileURLWithPath: testPath),
+                options: [.atomic]
+            )
 
             try? fileManager.removeItem(atPath: testPath)
 
