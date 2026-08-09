@@ -8,7 +8,7 @@
  *    - real ELF loader (relocations + DT_INIT_ARRAY + JNI_OnLoad)
  *    - real DEX interpreter (subset Dalvik bytecode + framework stubs)
  *    - real software OpenGL ES 2.0 (swgl) + tiny GLSL ES interpreter
- *    - real JNI bridge (common JNIEnv*/JavaVM* vtable entries)
+ *    - real JNI bridge (common JNIEnv* / JavaVM* vtable entries)
  *    - real Bionic libc shim (pthread, ashmem, __system_property_get, log)
  *    - per-run log file under <AppSupport>/APKLive/logs/
  *
