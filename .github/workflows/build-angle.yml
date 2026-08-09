@@ -46,29 +46,41 @@ jobs:
           '
           autoninja -C out/ios libEGL_static libGLESv2_static
 
-          echo "=== Find actual library files ==="
-          find out/ios -name "*.a" -type f | head -20
+          echo "=== Find libraries ==="
+          find out/ios -name "libEGL_static.a" -o -name "libGLESv2_static.a"
 
-          EGL_FILE=$(find out/ios -name "libEGL_static.a" -type f | head -1)
-          GLES_FILE=$(find out/ios -name "libGLESv2_static.a" -type f | head -1)
+          EGL_THIN=$(find out/ios -name "libEGL_static.a" | head -1)
+          GLES_THIN=$(find out/ios -name "libGLESv2_static.a" | head -1)
 
-          echo "EGL:  $EGL_FILE"
-          echo "GLES: $GLES_FILE"
+          echo "EGL thin:  $EGL_THIN"
+          echo "GLES thin: $GLES_THIN"
 
-          if [ -z "$EGL_FILE" ] || [ -z "$GLES_FILE" ]; then
-            echo "::error::Could not find built .a files"
-            exit 1
-          fi
+          file "$EGL_THIN"
+          file "$GLES_THIN"
 
-          echo "=== Verify file types ==="
-          file "$EGL_FILE"
-          file "$GLES_FILE"
-
-          echo "=== Copy to repo ==="
+          echo "=== Repack into fat archives ==="
           mkdir -p "${{ github.workspace }}/Native/ANGLE/lib"
-          cp "$EGL_FILE"  "${{ github.workspace }}/Native/ANGLE/lib/libEGL.a"
-          cp "$GLES_FILE" "${{ github.workspace }}/Native/ANGLE/lib/libGLESv2.a"
+
+          # Repack libEGL
+          TMP_EGL=$(mktemp -d)
+          cd "$TMP_EGL"
+          ar x "$EGL_THIN"
+          ar rcs "${{ github.workspace }}/Native/ANGLE/lib/libEGL.a" *.o
+          cd ..
+          rm -rf "$TMP_EGL"
+
+          # Repack libGLESv2
+          TMP_GLES=$(mktemp -d)
+          cd "$TMP_GLES"
+          ar x "$GLES_THIN"
+          ar rcs "${{ github.workspace }}/Native/ANGLE/lib/libGLESv2.a" *.o
+          cd ..
+          rm -rf "$TMP_GLES"
+
+          echo "=== Final files ==="
           ls -lh "${{ github.workspace }}/Native/ANGLE/lib/"
+          file "${{ github.workspace }}/Native/ANGLE/lib/libEGL.a"
+          file "${{ github.workspace }}/Native/ANGLE/lib/libGLESv2.a"
 
       - name: Commit to repo
         run: |
@@ -76,4 +88,5 @@ jobs:
           git config user.email "github-actions@github.com"
           git add Native/ANGLE/lib/
           git diff --cached --quiet || git commit -m "Add ANGLE static libraries for iOS arm64"
+          git pull --rebase origin main
           git push
