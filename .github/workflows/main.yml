@@ -31,6 +31,7 @@ jobs:
         run: |
           brew install xcodegen
           xcodegen --version
+
       # -----------------------------------------------------------------------
       # 1. Cache the ANGLE libraries so we don't rebuild them every run
       # -----------------------------------------------------------------------
@@ -59,9 +60,9 @@ jobs:
           mkdir -p "$HOME/angle-work"
           cd "$HOME/angle-work"
           fetch angle
-          cd angle/src
 
           echo "=== Generating iOS build files ==="
+          cd src
           gn gen out/ios --args='
             target_os="ios"
             target_cpu="arm64"
@@ -79,7 +80,7 @@ jobs:
           mkdir -p "${{ github.workspace }}/Native/ANGLE/lib"
           cp out/ios/libEGL_static.a  "${{ github.workspace }}/Native/ANGLE/lib/libEGL.a"
           cp out/ios/libGLESv2_static.a "${{ github.workspace }}/Native/ANGLE/lib/libGLESv2.a"
-          
+
       - name: Generate Xcode project
         run: |
           xcodegen generate
@@ -87,9 +88,7 @@ jobs:
       - name: Build unsigned application
         run: |
           set -o pipefail
-
           mkdir -p build
-
           xcodebuild \
             -project APKContainer.xcodeproj \
             -scheme APKContainer \
@@ -105,16 +104,13 @@ jobs:
       - name: Verify application
         run: |
           APP_PATH="build/DerivedData/Build/Products/Release-iphoneos/APKContainer.app"
-
           if [ ! -d "$APP_PATH" ]; then
             echo "::error::APKContainer.app was not produced"
             find build/DerivedData -name "*.app" -print
             exit 1
           fi
-
           echo "Built:"
           echo "$APP_PATH"
-
           /usr/libexec/PlistBuddy \
             -c "Print :CFBundleIdentifier" \
             "$APP_PATH/Info.plist"
@@ -122,17 +118,12 @@ jobs:
       - name: Create unsigned IPA
         run: |
           set -e
-
           APP_PATH="build/DerivedData/Build/Products/Release-iphoneos/APKContainer.app"
-
           rm -rf build/IPA
           mkdir -p build/IPA/Payload
-
           cp -R "$APP_PATH" build/IPA/Payload/
-
           cd build/IPA
           zip -qry ../APKLive.ipa Payload
-
           cd ../..
           echo "Created:"
           ls -lh build/APKLive.ipa
@@ -140,7 +131,6 @@ jobs:
       - name: Verify IPA structure
         run: |
           unzip -l build/APKLive.ipa | head -50
-
           if ! unzip -l build/APKLive.ipa | grep -q "Payload/APKContainer.app/"; then
             echo "::error::Invalid IPA: missing Payload/APKContainer.app"
             exit 1
