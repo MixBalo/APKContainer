@@ -48,6 +48,8 @@
 
 #define LOG_TAG "runtime"
 
+void input_bridge_set_foreground(const char *packageId);
+
 // ---- Entitlement / distribution probe ----
 // Returns 1 if the process can mprotect PROT_EXEC (TrollStore or jailbreak).
 static int can_exec_unsigned(void) {
