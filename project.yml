@@ -78,7 +78,7 @@ targets:
       - sdk: AudioToolbox.framework
       - sdk: AVFoundation.framework
       - sdk: AVKit.framework
-      - sdk: Compression.framework
+      - sdk: libz.tbd  
       - sdk: UniformTypeIdentifiers.framework
       - sdk: CoreHaptics.framework
       - sdk: os.framework
