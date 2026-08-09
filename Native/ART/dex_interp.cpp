@@ -39,6 +39,7 @@
 #include <math.h>
 #include <limits.h>
 #include <errno.h>
+#include <sys/stat.h>
 
 #include <new>
 #include <utility>
@@ -4596,7 +4597,20 @@ int stub_context_getsharedprefs(dex_vm_t *vm, dex_value_t *args, int, dex_value_
     if (root.back() != '/') root += "/";
     root += "shared_prefs/";
     // Best-effort mkdir; ignore failure.
-    (void)system(("mkdir -p '" + root + "' 2>/dev/null").c_str());
+    {
+        std::string path = root;
+        size_t pos = 0;
+        do {
+            pos = path.find('/', pos + 1);
+            std::string sub = path.substr(0, pos);
+            if (!sub.empty()) {
+                struct stat st;
+                if (stat(sub.c_str(), &st) != 0) {
+                    mkdir(sub.c_str(), 0755);
+                }
+            }
+        } while (pos != std::string::npos);
+    }
     root += name;
     root += ".json";
     dex_obj_t *sp = make_stub_obj(vm, "Landroid/content/SharedPreferences;", 1);
