@@ -1,79 +1,79 @@
-# APKLive — LiveContainer-style APK runner for iOS
+# Android APK Runner for iOS
 
-> **Status: ARCHITECTURE + PROJECT SKELETON. Not a bootable product.**
-> Read [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) before anything else.
+A LiveContainer-style iOS app that installs and runs Android `.apk` packages on-device — pick an APK, it appears in a home-screen-style grid, tap to launch.
 
-APKLive is an iOS app that installs and runs Android `.apk` files inside a
-LiveContainer-style container UI: a grid of installed "apps" with icons,
-tap-to-launch, per-app sandboxed storage, and a per-app detail/settings screen.
-The benchmark for "it actually works" is **Among Us** (Unity/IL2CPP, native
-arm64, OpenGL ES, multitouch, audio, networking).
+**This is not an emulator in the traditional sense and not a simple "installer."** An APK targets a different OS's runtime (Dalvik/ART bytecode, Bionic libc, the Android native graphics/IPC stack). Since target devices are arm64, there's no CPU emulation needed for 64-bit native code — but nearly everything else about Android's OS layer has to be reimplemented well enough that the app believes it's running on Android.
 
-## ⚠️ Environment note (read this first)
+## Status
 
-This deliverable was produced in a **web/Next.js Linux sandbox that has no
-Xcode, no macOS, and no iOS toolchain**. The Swift/C/C++ sources here are
-written to be correct and build-ready on a Mac with **Xcode 15+**, but they
-have **not been compiled or run** in this environment, and they have not been
-tested on a device. Open the project in Xcode on a Mac to build. There is
-nothing to preview in a browser — this is a native iOS app, not a website.
+⚠️ Early / architecture stage. See the [capability matrix](#capability-matrix) below for what actually works today.
 
-## What's in this repo
+## Why this is hard (read before filing issues)
 
-```
-ios-apk-container/
-├─ README.md                         (this file)
-├─ docs/
-│  ├─ ARCHITECTURE.md                the hard decisions, before any code
-│  ├─ CAPABILITY_MATRIX.md           implemented vs stubbed vs unsupported
-│  ├─ BUILD_AND_RUN.md               device + provisioning requirements
-│  └─ LIMITATIONS.md                 blunt honesty
-├─ project.yml                       XcodeGen project spec (run `xcodegen generate`)
-├─ ApkContainer/                     Swift app
-│  ├─ App/                           @main, ContentView (TabView)
-│  ├─ UI/                            LiveContainer-style SwiftUI views
-│  ├─ Core/
-│  │  ├─ Catalog/                    AppRecord, AppCatalog, CatalogStore
-│  │  ├─ Installer/                  ApkInstaller, ApkParser, BinaryManifestParser,
-│  │  │                              ZipReader, DexInspector, NativeLibExtractor,
-│  │  │                              IconExtractor, ResourcesArscReader
-│  │  ├─ Sandbox/                    SandboxManager, PathLayout
-│  │  └─ Runtime/                    RuntimeEngine, ActivityLifecycle, GraphicsSurface,
-│  │                                 InputBridge, AudioBridge, DistributionProbe
-│  └─ Bridging/include/ApkContainer.h   C ABI the Swift façades call
-└─ Native/                           C/C++ runtime
-   ├─ Loader/  elf_loader.c, bionic_shim.c
-   ├─ ART/     art_runtime.cpp       (interpreter-only ART wrapper; embeds AOSP — STUB)
-   ├─ JNI/     jni_bridge.cpp
-   ├─ Graphics/ graphics_bridge.cpp  (ANGLE-over-Metal — integration STUB)
-   ├─ Audio/   opensl_bridge.c
-   ├─ Input/   input_bridge.c
-   ├─ Lifecycle/ lifecycle_bridge.c
-   └─ include/ *.h
-```
+Two separate problems, both required:
 
-## The one-paragraph summary
+1. **Managed code** — most app logic ships as Dalvik/ART bytecode. Needs either an ART/Dalvik interpreter (or JIT) embedded in the app, or AOT translation of DEX to native code.
+2. **Native code** — game engines (Unity/IL2CPP, Cocos2d, etc.) ship `.so` libraries in `lib/arm64-v8a/`, compiled against Bionic libc and the Android NDK ABI. Running them requires a Bionic libc shim, a custom ELF loader, JNI bridging back to the managed-code layer, and an EGL/OpenGL ES shim that routes into Metal.
 
-Running a real Android game inside an iOS app is **not** "installing an app" —
-it is reimplementing enough of Android's OS/runtime layer that the APK believes
-it is on Android. We pick **TrollStore on iOS 14.0–16.6.1** (non-jailbroken,
-CoreTrust-bug) as the install path because only it grants the entitlements
-needed for JIT-capable memory and unsigned-code execution; we run
-**interpreter-only ART** (JIT/AOT disabled) for the Dalvik bytecode; we load the
-APK's native `.so` files with a **custom in-process ELF loader** + **Bionic libc
-shim**; and we render via **ANGLE (GLES 2/3 over Metal)** into a `CAMetalLayer`.
-**Among Us is the integration target, not a verified result** — components 1–5
-must each pass on a trivial test APK before Among Us is even attempted.
+`armeabi-v7a`-only (32-bit) APKs are **out of scope** — iOS has not supported 32-on-64 execution since iOS 11.
 
-## Quick links
+## Platform constraints that shape everything else
 
-- Why your device/install path matters: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §1
-- What actually works today: [`docs/CAPABILITY_MATRIX.md`](docs/CAPABILITY_MATRIX.md)
-- How to build & run: [`docs/BUILD_AND_RUN.md`](docs/BUILD_AND_RUN.md)
-- What's fake / what's honest: [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md)
+- **JIT is blocked.** iOS enforces W^X for third-party apps; the `dynamic-codesigning` entitlement isn't granted outside jailbreak/enterprise contexts. This project must pick one of:
+  - Jailbroken device (entitlement restriction lifted) — full JIT/interpreter, best compatibility
+  - Interpreter-only ART (no JIT) — works on non-jailbroken devices, significantly slower
+  - AOT-compile DEX to a native binary at install time — still requires a codesigning path that allows re-signing generated code (enterprise/dev cert)
+- **Unsigned native code.** `.so` files pulled from an APK are unsigned ARM64 object code; iOS requires every executable page to belong to a codesigned binary. Requires either a custom in-process loader that maps them as data and executes via a pre-signed trampoline (jailbreak) or re-signing at install time under a provisioning profile that permits it.
+- **Per-app sandbox.** Each installed APK gets its own writable directory mimicking `/data/data/<package>/`, built on iOS's own sandboxed filesystem.
 
-## License
+**Target install method: [TBD — pick one and document why: jailbroken + tweak injection / TrollStore-style / dev-signed sideload].** This decision determines what "fully functional" can mean for non-jailbroken users and should be finalized and stated explicitly before further implementation.
 
-Research/educational. Not affiliated with Google, Apple, Innersloth (Among Us),
-or the ANGLE/LiveContainer/TrollStore projects. All trademarks belong to their
-owners.
+## Architecture
+
+Build order:
+
+1. **APK parser/installer** — unzip, parse binary `AndroidManifest.xml` and `classes.dex`, extract `lib/arm64-v8a/*.so`, extract icon/resources, register in a local catalog (SQLite/plist), create sandboxed data dir.
+2. **DEX/ART execution layer** — the core of the project. Either adapt an existing open-source Dalvik/ART interpreter, or write a DEX bytecode interpreter scoped to the instruction subset real apps use. Framework surface (Activity lifecycle, common `android.*` classes) is implemented explicitly and incrementally — unimplemented calls are stubbed with logged no-ops, never silently ignored.
+3. **Bionic libc / native loader shim** — custom ELF loader for `.so`s, symbol resolution against the libc shim, JNI environment (`JNIEnv*`, `JavaVM*`) so native code can call back into layer 2.
+4. **Graphics bridge** — EGL/OpenGL ES shim whose `eglSwapBuffers` etc. render into a `CAMetalLayer`, via GL→Metal translation (e.g. adapting ANGLE) or draw-call interception. This is the most CPU/GPU-costly piece and the one that determines whether a game renders at all vs. black-screens.
+5. **Input/audio/lifecycle bridging** — touch → `MotionEvent` equivalents, audio buffers → `AVAudioEngine`, Activity lifecycle driven by the container UI.
+6. **Container UI** — SwiftUI: grid of installed apps, `.apk` import via document picker, tap-to-launch full-screen container view, per-app detail/uninstall, running-apps list if backgrounding is supported.
+
+## Capability matrix
+
+Keep this current — it's the honest source of truth for what works.
+
+| Component | Status | Notes |
+|---|---|---|
+| APK parsing / install | ☐ Not started | |
+| Manifest / DEX parsing | ☐ Not started | |
+| DEX interpreter | ☐ Not started | |
+| `android.*` framework coverage | ☐ Not started | List implemented classes here as they land |
+| Bionic libc shim | ☐ Not started | |
+| Native `.so` ELF loader | ☐ Not started | |
+| JNI bridge | ☐ Not started | |
+| EGL → Metal graphics bridge | ☐ Not started | |
+| Touch input | ☐ Not started | |
+| Audio | ☐ Not started | |
+| Activity lifecycle | ☐ Not started | |
+| Container UI | ☐ Not started | |
+
+## Benchmark target
+
+**Among Us** (Unity/IL2CPP) is the integration-test target — it exercises native code execution, real-framerate OpenGL ES rendering, multitouch, sockets, and audio all at once. It is the *last* thing to try, not the first: get a minimal, mostly-Java, non-native test APK running end-to-end through every layer first.
+
+## Requirements
+
+- Device: modern iPhone, arm64
+- Jailbreak status: **[TBD]**
+- Provisioning profile type: **[TBD]**
+
+## Non-goals
+
+- 32-bit (`armeabi-v7a`-only) APKs
+- Full Android API surface parity
+- App Store distribution (given the JIT/codesigning constraints above, this is unlikely to be shippable there — state this plainly rather than after the fact)
+
+## Contributing
+
+Before opening a PR: don't stub a hard piece and call it done. If something's a placeholder, mark it `[stub]` in code and in the capability matrix.
