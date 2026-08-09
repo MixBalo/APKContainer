@@ -81,4 +81,3 @@ targets:
       - sdk: libz.tbd  
       - sdk: UniformTypeIdentifiers.framework
       - sdk: CoreHaptics.framework
-      - sdk: os.framework
