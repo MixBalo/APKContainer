@@ -20,6 +20,7 @@
 #include <sys/mman.h>
 #include <sys/ioctl.h>
 #include <os/log.h>
+#include <dlfcn.h>
 
 #define LOG_TAG_BIONIC "bionic"
 
@@ -244,9 +245,10 @@ typedef const struct SLInterfaceID_ *SLInterfaceID;
  * the values would need to match the official SLES 1.0.1 UUIDs from
  * OpenSLES.h — to be verified before shipping.
  */
-#define DEFINE_SL_IID(name, a, b, c, d, e0, e1, e2, e3, e4, e5) \
+#define DEFINE_SL_IID(name, a, b, c, d0, d1, e0, e1, e2, e3, e4, e5) \
     const struct SLInterfaceID_ SL_IID##name##_ = { \
-        (SLuint32)(a), (SLuint16)(b), (SLuint16)(c), (SLuint8)(d), \
+        (SLuint32)(a), (SLuint16)(b), (SLuint16)(c), \
+        (SLuint8)(d0), (SLuint8)(d1), \
         { (SLuint8)(e0), (SLuint8)(e1), (SLuint8)(e2), \
           (SLuint8)(e3), (SLuint8)(e4), (SLuint8)(e5) } \
     }
