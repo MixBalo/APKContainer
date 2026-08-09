@@ -18,6 +18,18 @@ typedef int64_t  Elf64_Sxword;
 /* e_ident indices and values */
 #define EI_NIDENT 16
 
+/* ELF magic string (convenience macro) */
+#define ELFMAG    "\177ELF"
+#define SELFMAG   4
+
+/* Special section indices */
+#define SHN_UNDEF     0
+#define SHN_COMMON    0xFFF2
+
+/* Extra AARCH64 relocation types used by the loader */
+#define R_AARCH64_COPY       1024
+#define R_AARCH64_IRELATIVE  1032
+
 #define ELFMAG0 0x7f
 #define ELFMAG1 'E'
 #define ELFMAG2 'L'
