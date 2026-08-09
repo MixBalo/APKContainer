@@ -290,7 +290,7 @@ static AVAudioPCMBuffer *convertToOutputFormat(sl_player_t *p,
             return nil;
         }
         inputDone = YES;
-        *outStatus = AVAudioConverterInputStatusHaveData;
+        *outStatus = AVAudioConverterInputStatus_HaveData;
         return inBuf;
     }];
     if (!ok || err) {
@@ -427,21 +427,7 @@ int opensl_bridge_create_player(sl_engine_t *engine, int channels,
     NSError *err = nil;
     [engine->audioEngine connect:p->node
                               to:engine->audioEngine.mainMixerNode
-                          format:connectFmt
-                           error:&err];
-    if (err) {
-        LOGE(TAG, "create_player: connect (appFmt) failed: %s — retrying with outFmt",
-             err.localizedDescription.UTF8String);
-        err = nil;
-        [engine->audioEngine connect:p->node
-                                  to:engine->audioEngine.mainMixerNode
-                              format:p->outFormat
-                               error:&err];
-        if (err) {
-            LOGE(TAG, "create_player: connect (outFmt) also failed: %s",
-                 err.localizedDescription.UTF8String);
-        }
-    }
+                          format:connectFmt];
 
     // Start the engine if not already running.
     if (!engine->audioEngine.running) {
@@ -736,7 +722,7 @@ int opensl_bridge_recorder_read(sl_player_t *recorder, void *out_buf,
     if (!recorder || !out_buf || !recorder->isRecorder) return -1;
     size_t floatsWanted = bytes / sizeof(float);
 
-    size_t available = 0;
+    __block size_t available = 0;
     __block size_t toCopy = 0;
     dispatch_sync(recorder->queue, ^{
         size_t have = recorder->recRing.size() - recorder->recReadPos;
