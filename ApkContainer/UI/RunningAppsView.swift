@@ -37,7 +37,10 @@ struct RunningAppsView: View {
             runningApps = RuntimeEngine.shared.runningApps
         }
         .fullScreenCover(item: $launching) { info in
-            RunningAppView(packageId: info.packageId)
+            RunningAppView(
+                packageId: info.packageId,
+                record: nil
+            )
         }
     }
 

@@ -26,6 +26,7 @@
 
 import Foundation
 import Combine
+import QuartzCore
 
 /// Errors raised by the runtime façade.
 public enum RuntimeError: LocalizedError {
