@@ -9,7 +9,7 @@ import Dispatch
 
 /// Best-effort distribution-path detector.
 ///
-/// Detects whether the application appears to have the entitlements
+/// Detects whether the application appears to have entitlements
 /// normally associated with JIT / unsigned executable memory, or whether
 /// common jailbreak indicators are present.
 ///
@@ -37,30 +37,29 @@ public final class DistributionProbe {
     public func detect() async -> Kind {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                let result = self.detectSync()
-                continuation.resume(returning: result)
+                continuation.resume(returning: self.detectSync())
             }
         }
     }
 
     private func detectSync() -> Kind {
-        // 1. Check for entitlements normally associated with the runtime.
+
         if hasTrollStoreEntitlements() {
             return .trollStore
         }
 
-        // 2. Check for common jailbreak indicators.
         if isJailbroken() {
             return .jailbreak
         }
 
-        // 3. Nothing detected.
         return .unknown
     }
+
 
     // MARK: - Entitlements
 
     private func hasTrollStoreEntitlements() -> Bool {
+
         let required: Set<String> = [
             "com.apple.security.cs.allow-jit",
             "com.apple.security.cs.allow-unsigned-executable-memory"
@@ -71,41 +70,51 @@ public final class DistributionProbe {
         }
 
         let present = Set(entitlements.keys)
+
         return required.isSubset(of: present)
     }
 
-    /// Reads the current process's task entitlements.
+
+    /// Reads the current application's signing entitlements.
     ///
-    /// `SecCode`, `SecCodeCopySelf`, and related APIs are macOS code-signing
-    /// APIs and are not available to an iOS target. `SecTask` is the
-    /// appropriate Security.framework API for querying the current task.
+    /// Uses public Security.framework APIs supported on iOS.
     private func currentEntitlements() -> [String: Any]? {
-        guard let task = SecTaskCreateFromSelf(nil) else {
+
+        var staticCode: SecCode?
+
+        let status = SecCodeCopySelf(
+            SecCSFlags(),
+            &staticCode
+        )
+
+        guard status == errSecSuccess,
+              let code = staticCode else {
             return nil
         }
 
-        let keys = [
-            "com.apple.security.cs.allow-jit",
-            "com.apple.security.cs.allow-unsigned-executable-memory"
-        ]
 
-        var result: [String: Any] = [:]
+        var information: CFDictionary?
 
-        for key in keys {
-            if let value = SecTaskCopyValue(
-                task,
-                key as CFString
-            ) {
-                result[key] = value
-            }
+        let infoStatus = SecCodeCopySigningInformation(
+            code,
+            SecCSFlags(rawValue: kSecCSSigningInformation),
+            &information
+        )
+
+        guard infoStatus == errSecSuccess,
+              let dictionary = information as? [String: Any] else {
+            return nil
         }
 
-        return result.isEmpty ? nil : result
+
+        return dictionary["entitlements"] as? [String: Any]
     }
+
 
     // MARK: - Jailbreak
 
     private func isJailbroken() -> Bool {
+
         let fileManager = FileManager.default
 
         let indicators = [
@@ -119,16 +128,17 @@ public final class DistributionProbe {
             "/usr/sbin/inject"
         ]
 
+
         for path in indicators {
             if fileManager.fileExists(atPath: path) {
                 return true
             }
         }
 
-        // Best-effort filesystem escape test.
-        //
-        // On a normal sandboxed iOS application this should fail.
+
+        // Sandbox escape test.
         let testPath = "/private/apkcontainer_jailbreak_test"
+
 
         do {
             let data = Data("test".utf8)
@@ -141,11 +151,13 @@ public final class DistributionProbe {
             try? fileManager.removeItem(atPath: testPath)
 
             return true
+
         } catch {
             return false
         }
     }
 }
+
 
 /// Spec-style alias.
 public typealias DistributionPath = DistributionProbe.Kind
