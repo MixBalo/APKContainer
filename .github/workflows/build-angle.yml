@@ -1,0 +1,61 @@
+name: Build and Commit ANGLE Binaries
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-angle:
+    runs-on: macos-14
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "15.4"
+
+      - name: Fake macOS 15 SDK symlink
+        run: |
+          sudo ln -sf /Applications/Xcode_15.4.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk \
+            /Applications/Xcode_15.4.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk
+
+      - name: Build ANGLE for iOS
+        run: |
+          set -e
+          echo "=== depot_tools ==="
+          git clone --depth=1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$HOME/depot_tools"
+          export PATH="$HOME/depot_tools:$PATH"
+
+          echo "=== Fetch ANGLE ==="
+          mkdir -p "$HOME/angle-work"
+          cd "$HOME/angle-work"
+          fetch angle
+
+          echo "=== Build ==="
+          cd src
+          gn gen out/ios --args='
+            target_os="ios"
+            target_cpu="arm64"
+            target_environment="device"
+            is_debug=false
+            ios_enable_code_signing=false
+            angle_enable_vulkan=false
+            angle_enable_gl=false
+            angle_enable_metal=true
+          '
+          autoninja -C out/ios libEGL_static libGLESv2_static
+
+          echo "=== Find & copy libs ==="
+          mkdir -p "${{ github.workspace }}/Native/ANGLE/lib"
+          find out/ios -name "libEGL_static.a" -exec cp {} "${{ github.workspace }}/Native/ANGLE/lib/libEGL.a" \;
+          find out/ios -name "libGLESv2_static.a" -exec cp {} "${{ github.workspace }}/Native/ANGLE/lib/libGLESv2.a" \;
+          ls -lh "${{ github.workspace }}/Native/ANGLE/lib/"
+
+      - name: Commit to repo
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add Native/ANGLE/lib/
+          git diff --cached --quiet || git commit -m "Add ANGLE static libraries for iOS arm64"
+          git push
