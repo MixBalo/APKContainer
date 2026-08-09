@@ -46,10 +46,28 @@ jobs:
           '
           autoninja -C out/ios libEGL_static libGLESv2_static
 
-          echo "=== Find & copy libs ==="
+          echo "=== Find actual library files ==="
+          find out/ios -name "*.a" -type f | head -20
+
+          EGL_FILE=$(find out/ios -name "libEGL_static.a" -type f | head -1)
+          GLES_FILE=$(find out/ios -name "libGLESv2_static.a" -type f | head -1)
+
+          echo "EGL:  $EGL_FILE"
+          echo "GLES: $GLES_FILE"
+
+          if [ -z "$EGL_FILE" ] || [ -z "$GLES_FILE" ]; then
+            echo "::error::Could not find built .a files"
+            exit 1
+          fi
+
+          echo "=== Verify file types ==="
+          file "$EGL_FILE"
+          file "$GLES_FILE"
+
+          echo "=== Copy to repo ==="
           mkdir -p "${{ github.workspace }}/Native/ANGLE/lib"
-          find out/ios -name "libEGL_static.a" -exec cp {} "${{ github.workspace }}/Native/ANGLE/lib/libEGL.a" \;
-          find out/ios -name "libGLESv2_static.a" -exec cp {} "${{ github.workspace }}/Native/ANGLE/lib/libGLESv2.a" \;
+          cp "$EGL_FILE"  "${{ github.workspace }}/Native/ANGLE/lib/libEGL.a"
+          cp "$GLES_FILE" "${{ github.workspace }}/Native/ANGLE/lib/libGLESv2.a"
           ls -lh "${{ github.workspace }}/Native/ANGLE/lib/"
 
       - name: Commit to repo
