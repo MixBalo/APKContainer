@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      APKLive entitlements.
+
+      These are ONLY honored at install time by TrollStore (iOS 14.0–16.6.1)
+      or by a jailbreak. A normal App Store / free sideload / paid-dev sideload
+      profile will REJECT them and the app cannot run any APK. Xcode will warn
+      that these are not allowed for your profile — ignore the warning; the
+      warning is exactly why TrollStore is required.
+
+      See docs/ARCHITECTURE.md §1 and docs/BUILD_AND_RUN.md §4.
+    -->
+    <key>get-task-allow</key>
+    <true/>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+    <key>com.apple.developer.kernel.increased-memory-limit</key>
+    <true/>
+</dict>
+</plist>

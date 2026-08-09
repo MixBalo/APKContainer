@@ -1,0 +1,91 @@
+# XcodeGen project spec for APKLive.
+# Generate with:  xcodegen generate
+# See docs/BUILD_AND_RUN.md.
+name: APKContainer
+options:
+  bundleIdPrefix: com.you.apklive
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    CLANG_CXX_LANGUAGE_STANDARD: "gnu++20"
+    GCC_C_LANGUAGE_STANDARD: gnu17
+    ENABLE_BITCODE: NO
+    CODE_SIGN_STYLE: Manual
+    # The entitlements below are enforced at install time by TrollStore;
+    # Xcode will warn they are not allowed for a normal profile — ignore.
+    CODE_SIGN_ENTITLEMENTS: ApkContainer/APKContainer.entitlements
+    SWIFT_OBJC_BRIDGING_HEADER: ApkContainer/Bridging/ApkContainer-Bridging-Header.h
+    HEADER_SEARCH_PATHS:
+      - $(SRCROOT)/ApkContainer/Bridging/include
+      - $(SRCROOT)/Native/include
+      - $(SRCROOT)/Native/RuntimeGlue
+    SYSTEM_HEADER_SEARCH_PATHS:
+      - $(SRCROOT)/Native/include
+      - $(SRCROOT)/Native/RuntimeGlue
+targets:
+  APKContainer:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: ApkContainer
+        excludes:
+          - "Bridging/include/ApkContainer.h"   # included via bridging header
+      - path: Native
+        excludes:
+          - "ANGLE/**"                          # ANGLE is built separately; see BUILD_AND_RUN.md §2
+    headers:
+      - ApkContainer/Bridging/include/ApkContainer.h
+    info:
+      path: ApkContainer/Info.plist
+      properties:
+        CFBundleDisplayName: APKLive
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIFileSharingEnabled: true                # expose Application Support via Finder/Files for APK import
+        LSSupportsOpeningDocumentsInPlace: true
+        NSDocumentsFolderUsageDescription: "APKLive reads .apk files you select."
+        NSAudioMicrophoneUsageDescription: "APKLive routes Android app audio to the speaker."
+        # Exported UTI for .apk so .fileImporter filters properly.
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.android.apk
+            UTTypeDescription: "Android Package"
+            UTTypeConformsTo:
+              - public.data
+              - public.archive
+            UTTypeTagSpecification:
+              public.filename-extension: ["apk"]
+              public.mime-type: "application/vnd.android.package-archive"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.you.apklive
+        TARGETED_DEVICE_FAMILY: "1,2"             # iPhone + iPad
+        # Software GLES 2.0 (Native/Graphics/swgl.cpp + glsl.cpp) is the
+        # primary renderer and has no external dependency. ANGLE is optional;
+        # to enable it, build per BUILD_AND_RUN.md §2 and uncomment the
+        # -force_load lines below. Without ANGLE, egl*/gl* symbols resolve
+        # via swgl_resolve() in graphics_bridge.cpp.
+        OTHER_LDFLAGS: >
+          $(inherited)
+          # -force_load $(SRCROOT)/Native/ANGLE/lib/libEGL.a
+          # -force_load $(SRCROOT)/Native/ANGLE/lib/libGLESv2.a
+    dependencies:
+      - sdk: Metal.framework
+      - sdk: MetalKit.framework
+      - sdk: QuartzCore.framework               # CAMetalLayer
+      - sdk: AudioToolbox.framework
+      - sdk: AVFoundation.framework
+      - sdk: AVKit.framework
+      - sdk: Compression.framework              # zlib/deflate for ZIP reader
+      - sdk: UniformTypeIdentifiers.framework
+      - sdk: CoreHaptics.framework
+      - sdk: os.framework
