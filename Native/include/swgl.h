@@ -33,6 +33,10 @@ int swgl_get_framebuffer_height(void);
 int swgl_init(void);
 int swgl_attach_output(void *layer, int width, int height);
 
+int swgl_egl_swap_buffers(void *dpy, void *surface);
+void swgl_shutdown(void);
+
+
 #ifdef __cplusplus
 }
 #endif
