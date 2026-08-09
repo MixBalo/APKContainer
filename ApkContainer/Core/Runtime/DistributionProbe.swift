@@ -4,22 +4,20 @@
 //
 
 import Foundation
-import Security
 import Dispatch
+
 
 /// Best-effort distribution-path detector.
 ///
-/// Detects whether the application appears to have entitlements
-/// normally associated with JIT / unsigned executable memory, or whether
-/// common jailbreak indicators are present.
-///
-/// This is heuristic detection only. The UI should never prevent the user
-/// from attempting to launch based solely on this result.
+/// Detects jailbreak indicators and limited runtime hints.
+/// Entitlement inspection is intentionally omitted because iOS does not
+/// expose public APIs for reading the current process entitlements.
 public final class DistributionProbe {
 
     public static let shared = DistributionProbe()
 
     public init() {}
+
 
     /// Distribution channel that APKContainer appears to be running under.
     public enum Kind: String, Sendable {
@@ -28,23 +26,28 @@ public final class DistributionProbe {
         case unknown
     }
 
+
     /// Synchronous detection.
     public static func detect() -> Kind {
         shared.detectSync()
     }
 
-    /// Async detection for SwiftUI `.task` / async contexts.
+
+    /// Async detection for SwiftUI `.task`.
     public func detect() async -> Kind {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                continuation.resume(returning: self.detectSync())
+                continuation.resume(
+                    returning: self.detectSync()
+                )
             }
         }
     }
 
+
     private func detectSync() -> Kind {
 
-        if hasTrollStoreEntitlements() {
+        if hasTrollStoreIndicators() {
             return .trollStore
         }
 
@@ -56,58 +59,24 @@ public final class DistributionProbe {
     }
 
 
-    // MARK: - Entitlements
+    // MARK: - TrollStore
 
-    private func hasTrollStoreEntitlements() -> Bool {
+    /// TrollStore detection without private entitlement APIs.
+    ///
+    /// This intentionally uses filesystem/runtime indicators only.
+    private func hasTrollStoreIndicators() -> Bool {
 
-        let required: Set<String> = [
-            "com.apple.security.cs.allow-jit",
-            "com.apple.security.cs.allow-unsigned-executable-memory"
+        let paths = [
+            "/var/containers/Bundle/Application",
+            "/var/Library/MobileInstallation",
+            "/private/var/mobile/Library/Preferences/com.apple.MobileInstallation.plist"
         ]
 
-        guard let entitlements = currentEntitlements() else {
-            return false
+        let fm = FileManager.default
+
+        return paths.contains {
+            fm.fileExists(atPath: $0)
         }
-
-        let present = Set(entitlements.keys)
-
-        return required.isSubset(of: present)
-    }
-
-
-    /// Reads the current application's signing entitlements.
-    ///
-    /// Uses public Security.framework APIs supported on iOS.
-    private func currentEntitlements() -> [String: Any]? {
-
-        var staticCode: SecCode?
-
-        let status = SecCodeCopySelf(
-            SecCSFlags(),
-            &staticCode
-        )
-
-        guard status == errSecSuccess,
-              let code = staticCode else {
-            return nil
-        }
-
-
-        var information: CFDictionary?
-
-        let infoStatus = SecCodeCopySigningInformation(
-            code,
-            SecCSFlags(rawValue: kSecCSSigningInformation),
-            &information
-        )
-
-        guard infoStatus == errSecSuccess,
-              let dictionary = information as? [String: Any] else {
-            return nil
-        }
-
-
-        return dictionary["entitlements"] as? [String: Any]
     }
 
 
@@ -115,22 +84,26 @@ public final class DistributionProbe {
 
     private func isJailbroken() -> Bool {
 
-        let fileManager = FileManager.default
+        let fm = FileManager.default
+
 
         let indicators = [
-            "/bin/bash",
-            "/usr/sbin/sshd",
             "/Applications/Cydia.app",
+            "/Applications/Sileo.app",
+            "/Applications/Zebra.app",
             "/Library/MobileSubstrate/MobileSubstrate.dylib",
-            "/bin/su",
+            "/usr/libexec/cydia",
             "/usr/bin/ssh",
+            "/usr/sbin/sshd",
+            "/bin/bash",
+            "/bin/su",
             "/private/var/lib/apt",
-            "/usr/sbin/inject"
+            "/private/var/stash"
         ]
 
 
         for path in indicators {
-            if fileManager.fileExists(atPath: path) {
+            if fm.fileExists(atPath: path) {
                 return true
             }
         }
@@ -148,7 +121,7 @@ public final class DistributionProbe {
                 options: [.atomic]
             )
 
-            try? fileManager.removeItem(atPath: testPath)
+            try? fm.removeItem(atPath: testPath)
 
             return true
 
