@@ -66,6 +66,7 @@ jobs:
           gn gen out/ios --args='
             target_os="ios"
             target_cpu="arm64"
+            target_environment="device"
             is_debug=false
             ios_enable_code_signing=false
             angle_enable_vulkan=false
@@ -80,7 +81,7 @@ jobs:
           mkdir -p "${{ github.workspace }}/Native/ANGLE/lib"
           cp out/ios/libEGL_static.a  "${{ github.workspace }}/Native/ANGLE/lib/libEGL.a"
           cp out/ios/libGLESv2_static.a "${{ github.workspace }}/Native/ANGLE/lib/libGLESv2.a"
-
+          
       - name: Generate Xcode project
         run: |
           xcodegen generate
