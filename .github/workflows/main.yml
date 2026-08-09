@@ -61,6 +61,10 @@ jobs:
           cd "$HOME/angle-work"
           fetch angle
 
+          echo "=== Workaround: fake macOS 15 SDK symlink ==="
+          sudo ln -sf /Applications/Xcode_15.4.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk \
+            /Applications/Xcode_15.4.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk
+
           echo "=== Generating iOS build files ==="
           cd src
           gn gen out/ios --args='
@@ -74,7 +78,7 @@ jobs:
             angle_enable_metal=true
           '
 
-          echo "=== Building ANGLE (this takes ~15-25 min on first run) ==="
+          echo "=== Building ANGLE ==="
           autoninja -C out/ios libEGL_static libGLESv2_static
 
           echo "=== Copying libraries into project ==="
