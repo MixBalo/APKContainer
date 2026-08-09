@@ -551,6 +551,13 @@ static jint JNI_FN(DetachCurrentThread)(void *);
 static jint JNI_FN(GetEnv)(void *, void**, jint);
 static jint JNI_FN(AttachCurrentThreadAsDaemon)(void *, void**, const void*);
 
+/* Variadic stubs for CallNonvirtual*Method (Clang can't convert variadic lambdas) */
+static jobject_custom CallNonvirtualObjectMethod_stub(void*, jobject_custom, jclass_custom, jmethodID_custom, ...) { return (jobject_custom)nullptr; }
+static jboolean CallNonvirtualBooleanMethod_stub(void*, jobject_custom, jclass_custom, jmethodID_custom, ...) { return (jboolean)0; }
+static jint CallNonvirtualIntMethod_stub(void*, jobject_custom, jclass_custom, jmethodID_custom, ...) { return (jint)0; }
+static jlong CallNonvirtualLongMethod_stub(void*, jobject_custom, jclass_custom, jmethodID_custom, ...) { return (jlong)0; }
+static void CallNonvirtualVoidMethod_stub(void*, jobject_custom, jclass_custom, jmethodID_custom, ...) { }
+
 /* ----------------------------------------------------------------------
  *  Static vtable instances
  * ---------------------------------------------------------------------- */
@@ -616,11 +623,11 @@ static const struct JNINativeInterface_ g_jni_vtable = {
     /* CallVoidMethodA */      nullptr,
 
     /* CallNonvirtual* — partial: forward to virtual */
-    [](void*, jobject_custom, jclass_custom, jmethodID_custom, ...){ return (jobject_custom)nullptr; },
-    [](void*, jobject_custom, jclass_custom, jmethodID_custom, ...){ return (jboolean)0; },
-    [](void*, jobject_custom, jclass_custom, jmethodID_custom, ...){ return (jint)0; },
-    [](void*, jobject_custom, jclass_custom, jmethodID_custom, ...){ return (jlong)0; },
-    [](void*, jobject_custom, jclass_custom, jmethodID_custom, ...){},
+    CallNonvirtualObjectMethod_stub,
+    CallNonvirtualBooleanMethod_stub,
+    CallNonvirtualIntMethod_stub,
+    CallNonvirtualLongMethod_stub,
+    CallNonvirtualVoidMethod_stub,
 
     /* GetFieldID */           JNI_FN(GetFieldID),
     /* GetObjectField */       JNI_FN(GetObjectField),

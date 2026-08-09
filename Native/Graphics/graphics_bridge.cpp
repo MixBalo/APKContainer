@@ -1,22 +1,20 @@
-/*
- * graphics_bridge.cpp — EGL/GLES bridge.
- *
- * Status: REAL (uses software GLES 2.0). All egl*/gl* symbol lookups are
- *         routed through swgl_resolve() (Native/Graphics/swgl.cpp). The
- *         rendered RGBA8 framebuffer is exposed via swgl_get_framebuffer();
- *         Swift reads it after each eglSwapBuffers and uploads to an
- *         MTLTexture of format .bgra8Unorm (channel swap handled by Swift).
- *
- *         ANGLE is no longer the primary path. If the user has built + linked
- *         ANGLE per BUILD_AND_RUN.md §2, its symbols can still be looked up
- *         via dlsym(RTLD_DEFAULT, name) as a fallback — but the software
- *         rasterizer is preferred because it has zero external dependencies.
- *
- * Honesty contract: see worklog.md Phase 2 / P2-0. The software GLES 2.0
- * implementation in swgl.cpp is REAL code that renders textured, shaded
- * triangles; unimplemented paths (cubemaps, FBOs, MRT, GL_POINTS, GL_LINES)
- * are logged via LOGW and return sensible defaults.
- */
+// graphics_bridge.cpp — EGL/GLES bridge.
+//
+// Status: REAL (uses software GLES 2.0). All egl* / gl* symbol lookups are
+//         routed through swgl_resolve() (Native/Graphics/swgl.cpp). The
+//         rendered RGBA8 framebuffer is exposed via swgl_get_framebuffer();
+//         Swift reads it after each eglSwapBuffers and uploads to an
+//         MTLTexture of format .bgra8Unorm (channel swap handled by Swift).
+//
+//         ANGLE is no longer the primary path. If the user has built + linked
+//         ANGLE per BUILD_AND_RUN.md section 2, its symbols can still be looked up
+//         via dlsym(RTLD_DEFAULT, name) as a fallback — but the software
+//         rasterizer is preferred because it has zero external dependencies.
+//
+// Honesty contract: see worklog.md Phase 2 / P2-0. The software GLES 2.0
+// implementation in swgl.cpp is REAL code that renders textured, shaded
+// triangles; unimplemented paths (cubemaps, FBOs, MRT, GL_POINTS, GL_LINES)
+// are logged via LOGW and return sensible defaults.
 #include "graphics_bridge.h"
 #include "swgl.h"
 #include "log_file.h"
@@ -30,7 +28,7 @@
 static void *s_attached_layer = nullptr;
 static int   s_surface_w = 0, s_surface_h = 0;
 static int   s_swgl_inited = 0;
-static int   s_angle_linked = 0;   /* set 1 only if ANGLE symbols are also present */
+static int   s_angle_linked = 0;   // set 1 only if ANGLE symbols are also present
 
 int graphics_bridge_attach_layer(void *cametal_layer) {
     s_attached_layer = cametal_layer;
@@ -68,16 +66,16 @@ int graphics_bridge_attach_layer(void *cametal_layer) {
 
 int graphics_bridge_swap_buffers(void) {
     if (!s_swgl_inited) return -1;
-    /* The current EGL display/surface/context live inside swgl's global state;
-     * we just call swgl_egl_swap_buffers with sentinel pointers. swgl ignores
-     * them (it has a single display/context/surface). */
+    // The current EGL display/surface/context live inside swgl's global state;
+    // we just call swgl_egl_swap_buffers with sentinel pointers. swgl ignores
+    // them (it has a single display/context/surface).
     return swgl_egl_swap_buffers(nullptr, nullptr) ? 0 : -1;
 }
 
 void *graphics_bridge_resolve(const char *symbol) {
     if (!symbol) return nullptr;
 
-    /* Route any egl*/gl* symbol through the software GLES resolver. */
+    // Route any egl* / gl* symbol through the software GLES resolver.
     if (strncmp(symbol, "egl", 3) == 0 || strncmp(symbol, "gl", 2) == 0) {
         void *p = swgl_resolve(symbol);
         if (p) return p;
@@ -104,9 +102,9 @@ int graphics_bridge_teardown(void) {
     return 0;
 }
 
-/* Optional: let Swift set the surface size after attach (e.g. when the
- * CAMetalLayer's drawableSize becomes known). Not declared in the header;
- * Swift can call swgl_attach_output directly with the new size. */
+// Optional: let Swift set the surface size after attach (e.g. when the
+// CAMetalLayer's drawableSize becomes known). Not declared in the header;
+// Swift can call swgl_attach_output directly with the new size.
 int graphics_bridge_set_surface_size(int w, int h) {
     s_surface_w = w;
     s_surface_h = h;
