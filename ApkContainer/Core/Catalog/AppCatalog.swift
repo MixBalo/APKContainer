@@ -142,7 +142,7 @@ public final class AppCatalog: ObservableObject {
             return
         }
         do {
-            try SandboxManager.shared.clearData(forPackage: id)
+            try SandboxManager.shared.clearData(for: id)
         } catch {
             lastError = error
         }

@@ -42,7 +42,7 @@ public enum ActivityLifecycle {
         // the Activity lifecycle method. Until then this is a no-op that
         // returns 0.
         return packageId.withCString { ptr in
-            apkcontainer_lifecycle_dispatch(ptr, event.rawValue)
+            apkcontainer_lifecycle_dispatch(ptr, Int32(event.rawValue))
         }
     }
 }

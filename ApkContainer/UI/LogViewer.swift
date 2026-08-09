@@ -15,6 +15,7 @@
 import SwiftUI
 
 /// A scrolling, auto-following view of the current run's log file.
+@MainActor
 struct LogViewer: View {
     /// Optional explicit path. If nil, uses RuntimeEngine.shared.logPath.
     let path: String?

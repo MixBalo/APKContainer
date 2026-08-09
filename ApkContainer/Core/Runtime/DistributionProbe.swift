@@ -2,176 +2,134 @@
 //  DistributionProbe.swift
 //  ApkContainer
 //
-//  Status: IMPLEMENTED (heuristic — not 100% reliable, but good enough to
-//  gate the UI's "you need TrollStore / jailbreak" warning).
+//  iOS-safe best-effort distribution detector.
 //
-//  Detects whether APKLive is running under:
-//    - TrollStore (CoreTrust-bug installs on iOS 14–16.6.1 with the JIT
-//      entitlements needed for ART interpreter + unsigned .so loading), or
-//    - jailbreak (palera1n / Dopamine etc., which can also grant those
-//      entitlements), or
-//    - unknown (everything else — App Store / free sideload / paid-dev
-//      sideload on a non-jailbroken device, which cannot grant the
-//      entitlements ART + ELF loader require).
+//  Important:
+//  Apple's SecCode / Code Signing Services APIs are macOS APIs and
+//  therefore are intentionally not used here. The iOS target cannot
+//  compile SecCodeCopySelf / SecCodeCopySigningInformation.
 //
-//  Deviation from spec:
-//    - The spec described `DistributionPath` as a free enum with four cases
-//      (`trollstore`, `jailbreak`, `unsupported`, `unknown`) and
-//      `DistributionProbe` as an enum with a `static detect()`. To match the
-//      Task 3-a UI, this file ships:
-//        * `DistributionProbe` as a `final class` with `static let shared` and
-//          both a static `detect()` and an instance `detect() async`.
-//        * A nested `Kind` enum with three cases (`trollStore`, `jailbreak`,
-//          `unknown`). The spec's separate `unsupported` case is folded into
-//          `unknown` because the UI displays both as "Unsupported / Not
-//          detected".
-//        * `DistributionPath` as a typealias for `DistributionProbe.Kind` so
-//          spec-style code (`DistributionPath`) keeps compiling.
+//  Detection is therefore heuristic:
+//    - jailbreak indicators are checked where possible;
+//    - TrollStore cannot be reliably identified from a normal iOS API;
+//    - unknown is returned when the environment cannot be positively
+//      identified.
 //
-//  Honesty contract: every detection method is best-effort. False negatives
-//  (a real TrollStore install misdetected as `.unknown`) are possible.
-//  The UI must always let the user override this and attempt a launch anyway;
-//  the launch itself will fail loudly if the entitlements are truly missing.
+//  The UI should treat this as advisory only and should not prevent the
+//  user from attempting to launch an APK.
 //
 
 import Foundation
-import Security
 
 /// Best-effort distribution-path detector.
 public final class DistributionProbe {
 
-    public static let shared = DistributionProbe()
+```
+public static let shared = DistributionProbe()
 
-    public init() {}
+public init() {}
 
-    /// Distribution channel that APKLive is currently running under.
-    public enum Kind: String, Sendable {
-        case trollStore
-        case jailbreak
-        case unknown
-    }
+/// Distribution channel that APKLive is currently running under.
+public enum Kind: String, Sendable {
+    case trollStore
+    case jailbreak
+    case unknown
+}
 
-    /// Synchronous detection. Use from non-async contexts.
-    @available(*, renamed: "detect()")
-    public static func detect() -> Kind {
-        return shared.detectSync()
-    }
+/// Synchronous detection.
+///
+/// Kept for callers that need a result immediately.
+public static func detect() -> Kind {
+    return Self.shared.detectSync()
+}
 
-    /// Async detection. Use from `await` contexts (e.g. SwiftUI `.task`).
-    /// The actual detection is synchronous and fast; this is `async` only to
-    /// match the Task 3-a UI's `await DistributionProbe.shared.detect()` call.
-    public func detect() async -> Kind {
-        // The detection involves `SecCodeCopySigningInformation` which can
-        // block briefly; hop off the main actor for safety.
-        return await withCheckedContinuation { (continuation: CheckedContinuation<Kind, Never>) in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let result = shared.detectSync()
-                continuation.resume(returning: result)
-            }
+/// Async detection.
+///
+/// The actual checks are quick, but this API is kept async so existing
+/// SwiftUI `.task` callers can continue to use:
+///
+///     await DistributionProbe.shared.detect()
+///
+public func detect() async -> Kind {
+    return await withCheckedContinuation { continuation in
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = Self.shared.detectSync()
+            continuation.resume(returning: result)
         }
-    }
-
-    private func detectSync() -> Kind {
-        // 1) TrollStore: look for the JIT/unsigned-memory entitlements.
-        if hasTrollStoreEntitlements() {
-            return .trollStore
-        }
-        // 2) Jailbreak: look for telltale files. False positives are possible
-        //    on rootless jailbreaks that hide these paths, but a positive is a
-        //    strong signal.
-        if isJailbroken() {
-            return .jailbreak
-        }
-        // 3) Default: unknown. The UI should warn the user that APK launch
-        //    will likely fail without TrollStore or jailbreak.
-        return .unknown
-    }
-
-    // MARK: - TrollStore
-
-    /// Returns true if the running app's entitlements include the JIT and
-    /// unsigned-executable-memory grants that TrollStore installs provide.
-    /// Uses `SecCodeCopySigningInformation` to read the entitlements
-    /// dictionary of the current code signature.
-    ///
-    /// Best-effort: on a non-jailbroken, non-TrollStore install this returns
-    /// false (which is correct — those entitlements are unavailable).
-    private func hasTrollStoreEntitlements() -> Bool {
-        // The two entitlements ART + ELF loader require:
-        //   com.apple.security.cs.allow-jit
-        //   com.apple.security.cs.allow-unsigned-executable-memory
-        // (TrollStore installs both as part of its CoreTrust-bug bypass.)
-        let required: Set<String> = [
-            "com.apple.security.cs.allow-jit",
-            "com.apple.security.cs.allow-unsigned-executable-memory"
-        ]
-        guard let entitlements = currentEntitlements() else {
-            return false
-        }
-        let present = Set(entitlements.keys)
-        return required.isSubset(of: present)
-    }
-
-    /// Reads the current process's entitlements dictionary via the Security
-    /// framework. Returns nil on any error.
-    private func currentEntitlements() -> [String: Any]? {
-        var code: SecCode?
-        let attrs: [String: Any] = [kSecCSSigningRequired as String: true]
-        let status = SecCodeCopySelf(attrs, &code)
-        guard status == errSecSuccess, let code = code else {
-            return nil
-        }
-        var info: CFDictionary?
-        let infoAttrs: [String: Any] = [
-            kSecCSSigningRequired as String: true,
-            kSecCSEntitlements as String: true
-        ]
-        let infoStatus = SecCodeCopySigningInformation(code, infoAttrs, &info)
-        guard infoStatus == errSecSuccess, let info = info else {
-            return nil
-        }
-        // The entitlements dictionary is under the kSecCodeInfoEntitlementsDict
-        // key in the signing info.
-        let infoNS = info as NSDictionary
-        guard let ents = infoNS[kSecCodeInfoEntitlementsDict as String] as? [String: Any] else {
-            return nil
-        }
-        return ents
-    }
-
-    // MARK: - Jailbreak
-
-    /// Returns true if any of the classic jailbreak-indicator files exist.
-    /// Modern rootless jailbreaks may hide these, so a false negative is
-    /// possible — but a positive is a strong signal.
-    private func isJailbroken() -> Bool {
-        let fm = FileManager.default
-        let indicators: [String] = [
-            "/bin/bash",
-            "/usr/sbin/sshd",
-            "/Applications/Cydia.app",
-            "/Library/MobileSubstrate/MobileSubstrate.dylib",
-            "/bin/su",
-            "/usr/bin/ssh",
-            "/private/var/lib/apt",
-            "/usr/sbin/inject"
-        ]
-        for path in indicators {
-            if fm.fileExists(atPath: path) { return true }
-        }
-        // Try to write outside the sandbox (a jailbreak grants this). Best-effort.
-        let jailbreakTest = "/private/jailbreak_test"
-        do {
-            try "test".data(using: .utf8)?.write(to: URL(fileURLWithPath: jailbreakTest))
-            try? fm.removeItem(atPath: jailbreakTest)
-            return true
-        } catch {
-            // Normal sandboxed behavior — expected.
-        }
-        return false
     }
 }
 
-/// Spec-style alias. `DistributionPath` is the same type as
-/// `DistributionProbe.Kind`.
+// MARK: - Detection
+
+private func detectSync() -> Kind {
+    // iOS does not expose the macOS SecCode APIs that were previously
+    // used to inspect entitlements.
+    //
+    // Therefore we cannot reliably distinguish TrollStore from another
+    // installation solely by inspecting the current code signature.
+    //
+    // A positive jailbreak signal is still useful.
+    if isJailbroken() {
+        return .jailbreak
+    }
+
+    return .unknown
+}
+
+// MARK: - Jailbreak
+
+/// Best-effort jailbreak detection.
+///
+/// Modern rootless jailbreaks can hide some traditional paths, so a
+/// negative result does not prove that the device is not jailbroken.
+private func isJailbroken() -> Bool {
+    let fm = FileManager.default
+
+    let indicators: [String] = [
+        "/bin/bash",
+        "/usr/sbin/sshd",
+        "/Applications/Cydia.app",
+        "/Library/MobileSubstrate/MobileSubstrate.dylib",
+        "/bin/su",
+        "/usr/bin/ssh",
+        "/private/var/lib/apt",
+        "/usr/sbin/inject"
+    ]
+
+    for path in indicators {
+        if fm.fileExists(atPath: path) {
+            return true
+        }
+    }
+
+    // A normal sandboxed iOS application should not be able to create
+    // arbitrary files outside its sandbox.
+    //
+    // This is only a heuristic. Failure is expected on normal iOS.
+    let jailbreakTestPath = "/private/apklive_jailbreak_test"
+
+    do {
+        let data = Data("test".utf8)
+        try data.write(
+            to: URL(fileURLWithPath: jailbreakTestPath),
+            options: .atomic
+        )
+
+        try? fm.removeItem(atPath: jailbreakTestPath)
+        return true
+    } catch {
+        return false
+    }
+}
+```
+
+}
+
+/// Spec-style alias.
+///
+/// Existing code can continue to use:
+///
+///     DistributionPath
+///
+/// without changing its type.
 public typealias DistributionPath = DistributionProbe.Kind

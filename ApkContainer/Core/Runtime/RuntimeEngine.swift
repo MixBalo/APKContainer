@@ -162,11 +162,11 @@ public final class RuntimeEngine: ObservableObject {
 
     /// Attaches a CAMetalLayer (via its opaque pointer) to the native graphics
     /// bridge. Called by `RunningAppView` when its container UIView is laid out.
-    public func attachGraphics(layer: UnsafeMutableRawPointer) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            _ = apkcontainer_graphics_attach_layer(layer)
-        }
+    public func attachGraphics(_ layer: CALayer) {
+        let pointer = Unmanaged.passUnretained(layer).toOpaque()
+        _ = apkcontainer_graphics_attach_layer(pointer)
     }
+    
 
     /// Resizes the GL framebuffer. Called when CAMetalLayer.drawableSize changes.
     public func resizeGraphics(width: Int, height: Int) {

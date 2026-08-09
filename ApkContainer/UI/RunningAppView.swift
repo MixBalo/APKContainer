@@ -116,7 +116,7 @@ final class SurfaceState: ObservableObject {
         layer.framebufferOnly = true
         layer.contentsScale = UIScreen.main.scale
     }
-
+    @MainActor
     func resize(width: Int, height: Int) {
         guard width > 0 && height > 0 else { return }
         let scale = UIScreen.main.scale
@@ -149,7 +149,8 @@ final class SurfaceState: ObservableObject {
     }
 
     private var onFPS: ((Int) -> Void)?
-
+    
+    @MainActor
     @objc private func tick(_ link: CADisplayLink) {
         guard let layer, layer.drawableSize.width > 0 else { return }
         // Pull the latest framebuffer from the software GLES and blit to the texture.
