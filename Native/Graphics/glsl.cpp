@@ -111,7 +111,7 @@ bool is_matrix(glsl_type_kind_t t) {
 }
 
 bool is_float_compatible(glsl_type_kind_t t) {
-    return t == GLSL_FLOAT || is_vector(t) && t != GLSL_IVEC2 && t != GLSL_IVEC3 && t != GLSL_IVEC4;
+    return t == GLSL_FLOAT || (is_vector(t) && t != GLSL_IVEC2 && t != GLSL_IVEC3 && t != GLSL_IVEC4);
 }
 
 int vec_size(glsl_type_kind_t t) {
@@ -1316,7 +1316,7 @@ Value Interp::eval(Node* n) {
         }
         case NK::Ternary: {
             Value c = eval(n->cond.get());
-            return (c.v[0] != 0.0f) ? eval(n->a.get()) : eval(n->b.get());
+            return (c.v[0] != 0.0f) ? eval(n->then_s.get()) : eval(n->else_s.get());
         }
         case NK::Call: {
             return eval_call(n);
