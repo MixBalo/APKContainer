@@ -92,11 +92,14 @@ typedef union jvalue {
     jobject_custom l;
 } jvalue;
 
+#define JNI_TRUE  1
+#define JNI_FALSE 0
+
 /* jfieldID / jmethodID — we encode as small integers that key into the DEX
  * VM's field/method tables. Real JNI uses opaque pointers; we use pointers
  * to intern'd descriptor strings. */
 typedef struct { const char *class_desc; const char *name; const char *sig; int is_static; } *jfieldID_custom;
-typedef struct { const char *class_desc; const char *name; const char *sig; int is_static; } *jmethodID_custom;
+typedef jfieldID_custom jmethodID_custom;
 
 /* Standard signatures (we use the C calling convention; variadic where the
  * JNI spec requires it). The struct field order must match Android's jni.h. */
@@ -433,7 +436,6 @@ static jshort      JNI_FN(CallShortMethod)(void *, jobject_custom, jmethodID_cus
 static jlong       JNI_FN(CallLongMethod)(void *, jobject_custom, jmethodID_custom, ...);
 static jfloat      JNI_FN(CallFloatMethod)(void *, jobject_custom, jmethodID_custom, ...);
 static jdouble     JNI_FN(CallDoubleMethod)(void *, jobject_custom, jmethodID_custom, ...);
-static jclass_custom JNI_FN(GetObjectClass)(void *, jobject_custom);
 static jbyte       JNI_FN(GetByteField)(void *, jobject_custom, jfieldID_custom);
 static jchar       JNI_FN(GetCharField)(void *, jobject_custom, jfieldID_custom);
 static jshort      JNI_FN(GetShortField)(void *, jobject_custom, jfieldID_custom);
@@ -547,6 +549,7 @@ static jint JNI_FN(DestroyJavaVM)(void *);
 static jint JNI_FN(AttachCurrentThread)(void *, void**, const void*);
 static jint JNI_FN(DetachCurrentThread)(void *);
 static jint JNI_FN(GetEnv)(void *, void**, jint);
+static jint JNI_FN(AttachCurrentThreadAsDaemon)(void *, void**, const void*);
 
 /* ----------------------------------------------------------------------
  *  Static vtable instances
@@ -876,15 +879,6 @@ static jobject_custom JNI_FN(NewObject)(void *env, jclass_custom cls,
     return r;
 }
 
-static jclass_custom JNI_FN(GetObjectClass)(void *, jobject_custom obj) {
-    /* For our object model, the class pointer is stored at obj->cls. We don't
-     * expose that here; return NULL and let callers use FindClass with the
-     * known type. Real ART would return GetObjectClass via the header. */
-    (void)obj;
-    LOGW(LOG_TAG_JNI, "GetObjectClass STUB — caller should use FindClass");
-    return nullptr;
-}
-
 static jboolean JNI_FN(IsInstanceOf)(void *, jobject_custom obj, jclass_custom cls) {
     (void)obj; (void)cls;
     return JNI_TRUE;   /* permissive: avoid breaking apps */
@@ -1122,11 +1116,13 @@ static jdouble JNI_FN(CallDoubleMethodV)(void *, jobject_custom obj, jmethodID_c
 static jdouble JNI_FN(CallDoubleMethod)(void *env, jobject_custom o, jmethodID_custom m, ...) { va_list ap; va_start(ap,m); jdouble r=JNI_FN(CallDoubleMethodV)(env,o,m,ap); va_end(ap); return r; }
 
 /* ---- GetObjectClass (REAL — reads obj->cls) ---- */
+/* dex_obj_t layout: first field is cls pointer. We use a local struct to
+ * avoid pulling in the full dex_interp.h definition. */
+struct dex_obj_layout { void *cls; };
 extern "C" const char *dex_obj_class_descriptor(dex_obj_t *obj);  /* from dex_interp */
 static jclass_custom JNI_FN(GetObjectClass)(void *, jobject_custom obj) {
     if (!obj) return nullptr;
-    /* The dex_obj_t has a cls pointer; we return it as a jclass. */
-    return (jclass_custom)((dex_obj_t *)obj)->cls;
+    return (jclass_custom)((struct dex_obj_layout *)obj)->cls;
 }
 
 /* ---- Typed Get*Field / Set*Field (REAL — read/write the right union member) ---- */
@@ -1174,6 +1170,9 @@ static jlong JNI_FN(CallStaticLongMethodV)(void *, jclass_custom, jmethodID_cust
     dex_value_t r; r.i64 = 0; dex_invoke(vm(),mid->class_desc,mid->name,mid->sig,args.data(),n_args,&r); return r.i64;
 }
 static jlong JNI_FN(CallStaticLongMethod)(void *env, jclass_custom c, jmethodID_custom m, ...) { va_list ap; va_start(ap,m); jlong r=JNI_FN(CallStaticLongMethodV)(env,c,m,ap); va_end(ap); return r; }
+
+/* Array header shared by all array implementations */
+struct jni_array_hdr { int type; jsize length; void *data; };
 
 /* ---- Remaining array types (REAL — same jni_array_hdr pattern) ---- */
 static jlongArray_custom  JNI_FN(NewLongArray)(void *, jsize len) { jni_array_hdr *h=(jni_array_hdr*)calloc(1,sizeof(*h)); h->type='J'; h->length=len; h->data=calloc(len>0?len:1,sizeof(jlong)); return (jlongArray_custom)h; }
@@ -1372,7 +1371,7 @@ static void JNI_FN(ReleaseStringUTFChars)(void *, jstring_custom, const char *) 
  * We model a Java array as a dex_obj_t with an extra payload. For v1 we
  * allocate a raw buffer + length; the dex_obj_t tag is "I[", "B[", etc. The
  * GetIntArrayElements returns the raw pointer; Release is a no-op. */
-struct jni_array_hdr { int type; jsize length; void *data; };  /* prefix */
+/* jni_array_hdr defined earlier, before Remaining array types section */
 
 static jsize JNI_FN(GetArrayLength)(void *, jarray_custom a) {
     if (!a) return 0;
