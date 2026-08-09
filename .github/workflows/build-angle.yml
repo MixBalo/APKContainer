@@ -43,44 +43,16 @@ jobs:
             angle_enable_vulkan=false
             angle_enable_gl=false
             angle_enable_metal=true
+            use_thin_archives=false
           '
           autoninja -C out/ios libEGL_static libGLESv2_static
 
-          echo "=== Find libraries ==="
-          find out/ios -name "libEGL_static.a" -o -name "libGLESv2_static.a"
-
-          EGL_THIN=$(find out/ios -name "libEGL_static.a" | head -1)
-          GLES_THIN=$(find out/ios -name "libGLESv2_static.a" | head -1)
-
-          echo "EGL thin:  $EGL_THIN"
-          echo "GLES thin: $GLES_THIN"
-
-          file "$EGL_THIN"
-          file "$GLES_THIN"
-
-          echo "=== Repack into fat archives ==="
+          echo "=== Copy libraries ==="
           mkdir -p "${{ github.workspace }}/Native/ANGLE/lib"
-
-          # Repack libEGL
-          TMP_EGL=$(mktemp -d)
-          cd "$TMP_EGL"
-          ar x "$EGL_THIN"
-          ar rcs "${{ github.workspace }}/Native/ANGLE/lib/libEGL.a" *.o
-          cd ..
-          rm -rf "$TMP_EGL"
-
-          # Repack libGLESv2
-          TMP_GLES=$(mktemp -d)
-          cd "$TMP_GLES"
-          ar x "$GLES_THIN"
-          ar rcs "${{ github.workspace }}/Native/ANGLE/lib/libGLESv2.a" *.o
-          cd ..
-          rm -rf "$TMP_GLES"
-
-          echo "=== Final files ==="
+          cp out/ios/obj/libEGL_static.a  "${{ github.workspace }}/Native/ANGLE/lib/libEGL.a"
+          cp out/ios/obj/libGLESv2_static.a "${{ github.workspace }}/Native/ANGLE/lib/libGLESv2.a"
           ls -lh "${{ github.workspace }}/Native/ANGLE/lib/"
-          file "${{ github.workspace }}/Native/ANGLE/lib/libEGL.a"
-          file "${{ github.workspace }}/Native/ANGLE/lib/libGLESv2.a"
+          file "${{ github.workspace }}/Native/ANGLE/lib/"*
 
       - name: Commit to repo
         run: |
