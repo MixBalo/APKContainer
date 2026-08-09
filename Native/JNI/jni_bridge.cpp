@@ -1,19 +1,29 @@
-// jni_bridge.cpp — JNIEnv* / JavaVM* vtable implementation backed by the DEX
-// interpreter.
-//
-// Status: REAL for the common path. The full JNINativeInterface_ vtable (~230
-//   entries) is defined; ~60 entries commonly used by NDK code are
-//   implemented against dex_interp.h; the rest log + return defaults.
-//   Native .so code that calls JNI_OnLoad, FindClass, RegisterNatives,
-//   GetMethodID, GetFieldID, NewStringUTF, Call*Method, Get*Field,
-//   NewGlobalRef, GetJavaVM works. Exotic entries (DefineClass,
-//   ToReflectedMethod, NewDirectByteBuffer is REAL) are marked.
-//
-//   The EXACT layout Android's jni.h uses, so native .so code's
-//   `env->FindClass(env, ...)` (which expands to `(*env)->FindClass(env, ...)`)
-//   works without adaptation.
-//
-// See docs/ARCHITECTURE.md section 3, docs/CAPABILITY_MATRIX.md section 4.
+/*
+ * jni_bridge.cpp — JNIEnv* / JavaVM* vtable implementation backed by the DEX
+ *                  interpreter
+ *
+ * Status: REAL for the common path.
+ *
+ *   We define the full JNINativeInterface_ and JNIInvokeInterface_ vtables in
+ *   the EXACT layout Android's jni.h uses, so native .so code's
+ *   `env->FindClass(env, ...)` (which expands to `(*env)->FindClass(env, ...)`)
+ *   works without adaptation. Common entries (FindClass, GetMethodID,
+ *   GetStaticMethodID, GetFieldID, GetStaticFieldID, NewStringUTF,
+ *   GetStringUTFChars, ReleaseStringUTFChars, New*Array, Get*ArrayElements,
+ *   Release*ArrayElements, Set*ArrayRegion, NewLocalRef, NewGlobalRef,
+ *   DeleteLocalRef, DeleteGlobalRef, IsInstanceOf, GetObjectClass,
+ *   RegisterNatives, UnregisterNatives, GetJavaVM, CallVoidMethod,
+ *   CallObjectMethod, CallIntMethod, CallBooleanMethod, CallStaticVoidMethod,
+ *   CallStaticObjectMethod, CallStaticIntMethod, GetIntField, SetIntField,
+ *   GetStaticIntField, SetStaticIntField, NewObject, GetVersion, Throw,
+ *   ThrowNew, ExceptionOccurred, ExceptionClear, ExceptionCheck,
+ *   NewDirectByteBuffer, GetDirectBufferAddress, GetDirectBufferCapacity,
+ *   AttachCurrentThread, DetachCurrentThread, GetEnv, DestroyJavaVM) are
+ *   implemented against dex_interp.h. The rest log via LOGW and return a
+ *   sensible default.
+ *
+ * See docs/ARCHITECTURE.md §3, docs/CAPABILITY_MATRIX.md §4.
+ */
 #include "jni_bridge.h"
 #include "art_runtime.h"
 #include "dex_loader.h"
@@ -283,7 +293,7 @@ struct JNINativeInterface_ {
 
     /* Misc */
     void        (*GetStringRegionChars)(void*, jstring_custom, jsize, jsize, jchar*);
-    jobject_custom (*NewDirectByteBuffer)(void*, jlong);
+    jobject_custom (*NewDirectByteBuffer)(void*, void*, jlong);
     void*       (*GetDirectBufferAddress)(void*, jobject_custom);
     jlong       (*GetDirectBufferCapacity)(void*, jobject_custom);
     jboolean    (*GetObjectRefType)(void*, jobject_custom);
@@ -527,7 +537,7 @@ static void        JNI_FN(ExceptionClear)(void *);
 static jboolean    JNI_FN(ExceptionCheck)(void *);
 static jint        JNI_FN(Throw)(void *, jthrowable_custom);
 static jint        JNI_FN(ThrowNew)(void *, jclass_custom, const char *);
-static jobject_custom JNI_FN(NewDirectByteBuffer)(void *, jlong);
+static jobject_custom JNI_FN(NewDirectByteBuffer)(void *, void *, jlong);
 static void*       JNI_FN(GetDirectBufferAddress)(void *, jobject_custom);
 static jlong       JNI_FN(GetDirectBufferCapacity)(void *, jobject_custom);
 static jsize       JNI_FN(GetArrayLength)(void *, jarray_custom);
@@ -568,6 +578,7 @@ static const struct JNINativeInterface_ g_jni_vtable = {
     /* NewObjectA */           nullptr,
 
     /* GetObjectClass */       JNI_FN(GetObjectClass),
+    /* IsInstanceOf */         JNI_FN(IsInstanceOf),
     /* GetMethodID */          JNI_FN(GetMethodID),
 
     /* CallObjectMethod */     JNI_FN(CallObjectMethod),
