@@ -4,6 +4,8 @@
 name: APKContainer
 options:
   bundleIdPrefix: com.you.apklive
+  xcodeVersion: "15.4"
+  projectFormat: "xcode15_0"
   deploymentTarget:
     iOS: "16.0"
   createIntermediateGroups: true
