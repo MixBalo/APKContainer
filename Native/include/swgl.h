@@ -8,7 +8,7 @@
  *         logged via LOGW and return a sensible default; see swgl.cpp headers.
  *
  * This is the symbol surface the ELF loader exposes for libEGL.so / libGLESv2.so
- * (those shim libs' resolver returns swgl_resolve(name) for any egl*/gl* name).
+ * (those shim libs' resolver returns swgl_resolve(name) for any egl* / gl* name).
  * Swift obtains the rendered framebuffer via swgl_get_framebuffer() and uploads
  * it to an MTLTexture of format .bgra8Unorm (channel swap handled by Swift).
  *

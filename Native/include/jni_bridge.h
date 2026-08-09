@@ -1,5 +1,5 @@
 /*
- * jni_bridge.h — JNIEnv*/JavaVM* implementation backed by the DEX interpreter
+ * jni_bridge.h — JNIEnv* / JavaVM* implementation backed by the DEX interpreter
  *
  * Status: REAL for the common path. The full JNINativeInterface_ vtable (~230
  *         entries) is defined; ~60 entries commonly used by NDK code are
