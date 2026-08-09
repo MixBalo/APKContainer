@@ -760,7 +760,9 @@ static void draw_primitives(int mode, const std::vector<VertexOutput>& verts, in
         for (size_t i = 0; i + 2 < verts.size(); i += 3) {
             /* Clip against near plane. */
             const VertexOutput* in[3] = {&verts[i], &verts[i+1], &verts[i+2]};
-            std::vector<VertexOutput> tmp(in, in + 3);
+            std::vector<VertexOutput> tmp;
+            tmp.reserve(3);
+            for (int i = 0; i < 3; i++) tmp.push_back(*in[i]);
             std::vector<VertexOutput> clipped;
             clip_near(tmp.data(), 3, clipped);
             if (clipped.size() < 3) continue;
@@ -960,6 +962,26 @@ void swgl_shutdown(void) {
     g.fb.depth.clear();
     g.inited = 0;
 }
+
+/* EGL entry-point forward declarations */
+static void* swgl_egl_get_display(void* native_display);
+static int   swgl_egl_initialize(void* dpy, int* major, int* minor);
+static int   swgl_egl_choose_config(void* dpy, const int* attrib_list, void* configs, int config_size, int* num_config);
+static void* swgl_egl_create_window_surface(void* dpy, void* config, void* win, const int* attrib_list);
+static void* swgl_egl_create_context(void* dpy, void* config, void* share_context, const int* attrib_list);
+static int   swgl_egl_make_current(void* dpy, void* draw, void* read, void* ctx);
+static int   swgl_egl_swap_buffers(void* dpy, void* surface);
+static int   swgl_egl_destroy_surface(void* dpy, void* surface);
+static int   swgl_egl_destroy_context(void* dpy, void* ctx);
+static int   swgl_egl_terminate(void* dpy);
+static int   swgl_gl_get_error(void);
+
+/* GL entry-point forward declarations */
+static void swgl_gl_clear_color(float r, float g, float b, float a);
+static void swgl_gl_clear(int mask);
+static void swgl_gl_viewport(int x, int y, int width, int height);
+static void swgl_gl_scissor(int x, int y, int width, int height);
+static void swgl_gl_enable(int cap);
 
 void *swgl_resolve(const char *name) {
     if (!name) return nullptr;
