@@ -47,18 +47,23 @@ jobs:
           '
           autoninja -C out/ios libEGL_static libGLESv2_static
 
-      - name: Find all .a files
+      - name: Find and inspect .a files
         run: |
-          echo "=== All .a files in out/ios ==="
+          echo "=== All .a files ==="
           find $HOME/angle-work/src/out/ios -name "*.a" -type f -exec ls -lh {} \;
           echo "=== File types ==="
           find $HOME/angle-work/src/out/ios -name "*.a" -type f -exec file {} \;
 
-      - name: Upload full build tree as artifact
+      - name: Tar full build tree for artifact
+        run: |
+          tar czf angle-build-tree.tar.gz -C $HOME/angle-work/src/out/ios .
+          ls -lh angle-build-tree.tar.gz
+
+      - name: Upload full build tree tarball
         uses: actions/upload-artifact@v4
         with:
           name: angle-full-build-tree
-          path: ~/angle-work/src/out/ios/
+          path: angle-build-tree.tar.gz
           retention-days: 5
 
       - name: Repack into fat archives (guaranteed)
@@ -72,7 +77,6 @@ jobs:
           echo "EGL source: $EGL_SRC"
           echo "GLES source: $GLES_SRC"
 
-          # Repack libEGL — extracts all .o files and rebuilds a real archive
           TMP_EGL=$(mktemp -d)
           cd "$TMP_EGL"
           ar x "$EGL_SRC"
@@ -80,7 +84,6 @@ jobs:
           cd ..
           rm -rf "$TMP_EGL"
 
-          # Repack libGLESv2
           TMP_GLES=$(mktemp -d)
           cd "$TMP_GLES"
           ar x "$GLES_SRC"
@@ -88,11 +91,11 @@ jobs:
           cd ..
           rm -rf "$TMP_GLES"
 
-          echo "=== Final files ==="
+          echo "=== Final repacked files ==="
           ls -lh "${{ github.workspace }}/Native/ANGLE/lib/"
           file "${{ github.workspace }}/Native/ANGLE/lib/"*
 
-      - name: Upload repacked libraries as artifact
+      - name: Upload repacked libraries
         uses: actions/upload-artifact@v4
         with:
           name: angle-repacked-libraries
