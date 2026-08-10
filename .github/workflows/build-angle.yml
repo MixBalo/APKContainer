@@ -1,12 +1,12 @@
 name: Build ANGLE (iOS / ARM64)
 
 on:
-  workflow_dispatch: # This allows you to manually trigger the build via a button
+  workflow_dispatch:
 
 jobs:
   build-angle:
     name: Build Static Libraries
-    runs-on: macos-latest # Uses a modern macOS runner, avoiding all Catalina issues
+    runs-on: macos-latest
 
     steps:
       - name: Checkout Repository
@@ -21,7 +21,6 @@ jobs:
         run: |
           mkdir -p angle-work
           cd angle-work
-          # fetch is part of depot_tools
           fetch angle
 
       - name: Generate Build Files (gn)
@@ -44,28 +43,45 @@ jobs:
           cd angle-work/src
           autoninja -C out/ios libEGL_static libGLESv2_static
 
-      - name: Force Repack to Fat Archives
+      - name: Repack to Fat Archives
         run: |
           cd angle-work/src/out/ios/obj
           mkdir -p repacked
           
-          # Use macOS's built-in llvm-ar
           LLVM_AR=$(xcode-select -p)/usr/bin/llvm-ar
           
-          echo "==> Repacking libEGL..."
-          cd libEGL_static
-          $LLVM_AR x ../libEGL_static.a
-          $LLVM_AR rcs ../repacked/libEGL.a *.o
-          cd ..
+          for lib in libEGL_static libGLESv2_static; do
+            echo "==> Repacking $lib..."
+            
+            # Clean temp dir
+            rm -rf "extract_$lib"
+            mkdir -p "extract_$lib"
+            cd "extract_$lib"
+            
+            # Extract every object file the thin archive references
+            $LLVM_AR x "../$lib.a"
+            
+            # Recursively find all .o files and repack into a regular (fat) archive
+            find . -type f -name "*.o" > objfiles.txt
+            $LLVM_AR rcs "../repacked/${lib%_static}.a" @objfiles.txt
+            
+            cd ..
+            rm -rf "extract_$lib"
+          done
           
-          echo "==> Repacking libGLESv2..."
-          cd libGLESv2_static
-          $LLVM_AR x ../libGLESv2_static.a
-          $LLVM_AR rcs ../repacked/libGLESv2.a *.o
-          cd ..
-          
-          echo "==> Final Repacked File Sizes (Should be MBs):"
-          ls -lh repacked/
+          echo "==> Verifying archives are NOT thin..."
+          for lib in libEGL libGLESv2; do
+            MAGIC=$(head -c 8 "repacked/$lib.a")
+            if echo "$MAGIC" | grep -q "<thin>"; then
+              echo "ERROR: repacked/$lib.a is still a thin archive!"
+              exit 1
+            fi
+            echo "✓ repacked/$lib.a is a regular archive"
+            echo "Size:"
+            ls -lh "repacked/$lib.a"
+            echo "Sample members:"
+            $LLVM_AR t "repacked/$lib.a" | head -5
+          done
 
       - name: Upload Fat Archives
         uses: actions/upload-artifact@v4
