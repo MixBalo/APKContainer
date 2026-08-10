@@ -43,44 +43,51 @@ jobs:
           cd angle-work/src
           autoninja -C out/ios libEGL_static libGLESv2_static
 
-      - name: Repack to Fat Archives
+      - name: Ensure Fat Archives
         run: |
           cd angle-work/src/out/ios/obj
           mkdir -p repacked
           
-          LLVM_AR=$(xcode-select -p)/usr/bin/llvm-ar
+          # macOS /usr/bin/ar IS llvm-ar and handles thin archives correctly
+          AR_CMD=$(which ar)
           
           for lib in libEGL_static libGLESv2_static; do
-            echo "==> Repacking $lib..."
+            echo "==> Processing $lib.a..."
             
-            # Clean temp dir
-            rm -rf "extract_$lib"
-            mkdir -p "extract_$lib"
-            cd "extract_$lib"
+            if file "$lib.a" | grep -q "thin archive"; then
+              echo "  Thin archive detected. Repacking to regular archive..."
+              
+              rm -rf "extract_$lib"
+              mkdir -p "extract_$lib"
+              
+              # ar t on a thin archive prints the relative path references.
+              # Copy each referenced .o file, flattening paths to avoid collisions.
+              ar t "$lib.a" | while read -r member; do
+                if [ -f "$member" ]; then
+                  flatname=$(echo "$member" | tr '/' '_')
+                  cp "$member" "extract_$lib/$flatname"
+                fi
+              done
+              
+              # Repack all collected objects into a real (fat) archive
+              find "extract_$lib" -type f -name "*.o" > "extract_$lib/objs.txt"
+              $AR_CMD rcs "repacked/${lib%_static}.a" @"extract_$lib/objs.txt"
+              
+              rm -rf "extract_$lib"
+            else
+              echo "  Regular archive detected. Copying as-is..."
+              cp "$lib.a" "repacked/${lib%_static}.a"
+            fi
             
-            # Extract every object file the thin archive references
-            $LLVM_AR x "../$lib.a"
-            
-            # Recursively find all .o files and repack into a regular (fat) archive
-            find . -type f -name "*.o" > objfiles.txt
-            $LLVM_AR rcs "../repacked/${lib%_static}.a" @objfiles.txt
-            
-            cd ..
-            rm -rf "extract_$lib"
-          done
-          
-          echo "==> Verifying archives are NOT thin..."
-          for lib in libEGL libGLESv2; do
-            MAGIC=$(head -c 8 "repacked/$lib.a")
-            if echo "$MAGIC" | grep -q "<thin>"; then
-              echo "ERROR: repacked/$lib.a is still a thin archive!"
+            # Hard fail if we somehow still produced a thin archive
+            if file "repacked/${lib%_static}.a" | grep -q "thin archive"; then
+              echo "ERROR: repacked/${lib%_static}.a is still a thin archive!"
               exit 1
             fi
-            echo "✓ repacked/$lib.a is a regular archive"
-            echo "Size:"
-            ls -lh "repacked/$lib.a"
-            echo "Sample members:"
-            $LLVM_AR t "repacked/$lib.a" | head -5
+            
+            echo "  Result:"
+            ls -lh "repacked/${lib%_static}.a"
+            file "repacked/${lib%_static}.a"
           done
 
       - name: Upload Fat Archives
