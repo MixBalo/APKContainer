@@ -47,12 +47,57 @@ jobs:
           '
           autoninja -C out/ios libEGL_static libGLESv2_static
 
-          echo "=== Copy libraries ==="
+      - name: Find all .a files
+        run: |
+          echo "=== All .a files in out/ios ==="
+          find $HOME/angle-work/src/out/ios -name "*.a" -type f -exec ls -lh {} \;
+          echo "=== File types ==="
+          find $HOME/angle-work/src/out/ios -name "*.a" -type f -exec file {} \;
+
+      - name: Upload full build tree as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: angle-full-build-tree
+          path: ~/angle-work/src/out/ios/
+          retention-days: 5
+
+      - name: Repack into fat archives (guaranteed)
+        run: |
+          set -e
           mkdir -p "${{ github.workspace }}/Native/ANGLE/lib"
-          cp out/ios/obj/libEGL_static.a  "${{ github.workspace }}/Native/ANGLE/lib/libEGL.a"
-          cp out/ios/obj/libGLESv2_static.a "${{ github.workspace }}/Native/ANGLE/lib/libGLESv2.a"
+
+          EGL_SRC=$(find $HOME/angle-work/src/out/ios -name "libEGL_static.a" | head -1)
+          GLES_SRC=$(find $HOME/angle-work/src/out/ios -name "libGLESv2_static.a" | head -1)
+
+          echo "EGL source: $EGL_SRC"
+          echo "GLES source: $GLES_SRC"
+
+          # Repack libEGL — extracts all .o files and rebuilds a real archive
+          TMP_EGL=$(mktemp -d)
+          cd "$TMP_EGL"
+          ar x "$EGL_SRC"
+          ar rcs "${{ github.workspace }}/Native/ANGLE/lib/libEGL.a" *.o
+          cd ..
+          rm -rf "$TMP_EGL"
+
+          # Repack libGLESv2
+          TMP_GLES=$(mktemp -d)
+          cd "$TMP_GLES"
+          ar x "$GLES_SRC"
+          ar rcs "${{ github.workspace }}/Native/ANGLE/lib/libGLESv2.a" *.o
+          cd ..
+          rm -rf "$TMP_GLES"
+
+          echo "=== Final files ==="
           ls -lh "${{ github.workspace }}/Native/ANGLE/lib/"
           file "${{ github.workspace }}/Native/ANGLE/lib/"*
+
+      - name: Upload repacked libraries as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: angle-repacked-libraries
+          path: Native/ANGLE/lib/
+          retention-days: 30
 
       - name: Commit to repo
         run: |
