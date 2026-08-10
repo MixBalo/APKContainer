@@ -57,4 +57,4 @@ Build order:
 
 ## Contributing
 
-Before opening a PR: don't stub a hard piece and call it done. If something's a placeholder, mark it `[stub]` in code and in the capability matrix.
+By contributing to this project via Pull Requests or issue submissions, you explicitly agree to the terms of the [APKContainer CLA](CLA.md).
