@@ -44,20 +44,32 @@ jobs:
           cd angle-work/src
           autoninja -C out/ios libEGL_static libGLESv2_static
 
-      - name: Verify Archive Size and Type
+      - name: Force Repack to Fat Archives
         run: |
           cd angle-work/src/out/ios/obj
-          echo "Checking file sizes (Should be MBs, not KBs):"
-          ls -lh *.a
-          echo "Checking file types (Should say 'current ar archive', NOT 'thin archive'):"
-          file libEGL_static.a
-          file libGLESv2_static.a
+          mkdir -p repacked
+          
+          # Use macOS's built-in llvm-ar
+          LLVM_AR=$(xcode-select -p)/usr/bin/llvm-ar
+          
+          echo "==> Repacking libEGL..."
+          cd libEGL_static
+          $LLVM_AR x ../libEGL_static.a
+          $LLVM_AR rcs ../repacked/libEGL.a *.o
+          cd ..
+          
+          echo "==> Repacking libGLESv2..."
+          cd libGLESv2_static
+          $LLVM_AR x ../libGLESv2_static.a
+          $LLVM_AR rcs ../repacked/libGLESv2.a *.o
+          cd ..
+          
+          echo "==> Final Repacked File Sizes (Should be MBs):"
+          ls -lh repacked/
 
       - name: Upload Fat Archives
         uses: actions/upload-artifact@v4
         with:
           name: angle-ios-static-libs
-          path: |
-            angle-work/src/out/ios/obj/libEGL_static.a
-            angle-work/src/out/ios/obj/libGLESv2_static.a
+          path: angle-work/src/out/ios/obj/repacked/*.a
           retention-days: 7
