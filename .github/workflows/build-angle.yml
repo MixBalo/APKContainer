@@ -1,39 +1,32 @@
-name: Build and Commit ANGLE Binaries
+name: Build ANGLE (iOS / ARM64)
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # This allows you to manually trigger the build via a button
 
 jobs:
   build-angle:
-    runs-on: macos-14
-    permissions:
-      contents: write
+    name: Build Static Libraries
+    runs-on: macos-latest # Uses a modern macOS runner, avoiding all Catalina issues
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      - uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: "15.4"
-
-      - name: Fake macOS 15 SDK symlink
+      - name: Install depot_tools
         run: |
-          sudo ln -sf /Applications/Xcode_15.4.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk \
-            /Applications/Xcode_15.4.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk
+          git clone --depth=1 https://chromium.googlesource.com/chromium/tools/depot_tools.git $HOME/depot_tools
+          echo "$HOME/depot_tools" >> $GITHUB_PATH
 
-      - name: Build ANGLE for iOS
+      - name: Fetch ANGLE Source Code
         run: |
-          set -e
-          echo "=== depot_tools ==="
-          git clone --depth=1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$HOME/depot_tools"
-          export PATH="$HOME/depot_tools:$PATH"
-
-          echo "=== Fetch ANGLE ==="
-          mkdir -p "$HOME/angle-work"
-          cd "$HOME/angle-work"
+          mkdir -p angle-work
+          cd angle-work
+          # fetch is part of depot_tools
           fetch angle
 
-          echo "=== Build ==="
-          cd src
+      - name: Generate Build Files (gn)
+        run: |
+          cd angle-work/src
           gn gen out/ios --args='
             target_os="ios"
             target_cpu="arm64"
@@ -45,68 +38,26 @@ jobs:
             angle_enable_metal=true
             use_thin_archives=false
           '
+
+      - name: Compile ANGLE (autoninja)
+        run: |
+          cd angle-work/src
           autoninja -C out/ios libEGL_static libGLESv2_static
 
-      - name: Find and inspect .a files
+      - name: Verify Archive Size and Type
         run: |
-          echo "=== All .a files ==="
-          find $HOME/angle-work/src/out/ios -name "*.a" -type f -exec ls -lh {} \;
-          echo "=== File types ==="
-          find $HOME/angle-work/src/out/ios -name "*.a" -type f -exec file {} \;
+          cd angle-work/src/out/ios/obj
+          echo "Checking file sizes (Should be MBs, not KBs):"
+          ls -lh *.a
+          echo "Checking file types (Should say 'current ar archive', NOT 'thin archive'):"
+          file libEGL_static.a
+          file libGLESv2_static.a
 
-      - name: Tar full build tree for artifact
-        run: |
-          tar czf angle-build-tree.tar.gz -C $HOME/angle-work/src/out/ios .
-          ls -lh angle-build-tree.tar.gz
-
-      - name: Upload full build tree tarball
+      - name: Upload Fat Archives
         uses: actions/upload-artifact@v4
         with:
-          name: angle-full-build-tree
-          path: angle-build-tree.tar.gz
-          retention-days: 5
-
-      - name: Repack into fat archives (guaranteed)
-        run: |
-          set -e
-          mkdir -p "${{ github.workspace }}/Native/ANGLE/lib"
-
-          EGL_SRC=$(find $HOME/angle-work/src/out/ios -name "libEGL_static.a" | head -1)
-          GLES_SRC=$(find $HOME/angle-work/src/out/ios -name "libGLESv2_static.a" | head -1)
-
-          echo "EGL source: $EGL_SRC"
-          echo "GLES source: $GLES_SRC"
-
-          TMP_EGL=$(mktemp -d)
-          cd "$TMP_EGL"
-          ar x "$EGL_SRC"
-          ar rcs "${{ github.workspace }}/Native/ANGLE/lib/libEGL.a" *.o
-          cd ..
-          rm -rf "$TMP_EGL"
-
-          TMP_GLES=$(mktemp -d)
-          cd "$TMP_GLES"
-          ar x "$GLES_SRC"
-          ar rcs "${{ github.workspace }}/Native/ANGLE/lib/libGLESv2.a" *.o
-          cd ..
-          rm -rf "$TMP_GLES"
-
-          echo "=== Final repacked files ==="
-          ls -lh "${{ github.workspace }}/Native/ANGLE/lib/"
-          file "${{ github.workspace }}/Native/ANGLE/lib/"*
-
-      - name: Upload repacked libraries
-        uses: actions/upload-artifact@v4
-        with:
-          name: angle-repacked-libraries
-          path: Native/ANGLE/lib/
-          retention-days: 30
-
-      - name: Commit to repo
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git add Native/ANGLE/lib/
-          git diff --cached --quiet || git commit -m "Add ANGLE static libraries for iOS arm64"
-          git pull --rebase origin main
-          git push
+          name: angle-ios-static-libs
+          path: |
+            angle-work/src/out/ios/obj/libEGL_static.a
+            angle-work/src/out/ios/obj/libGLESv2_static.a
+          retention-days: 7
