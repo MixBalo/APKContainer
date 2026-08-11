@@ -77,6 +77,34 @@ jobs:
           cd angle-work/src
           autoninja -C out/ios libEGL_static libGLESv2_static
 
+      - name: Inspect ANGLE Static Libraries
+        run: |
+          cd angle-work/src/out/ios/obj
+      
+          echo "=== FILE TYPES ==="
+          file libEGL_static.a
+          file libGLESv2_static.a
+      
+          echo ""
+          echo "=== SIZES ==="
+          ls -lh libEGL_static.a
+          ls -lh libGLESv2_static.a
+      
+          echo ""
+          echo "=== ARCHIVE MEMBERS: libEGL_static.a ==="
+          ar -t libEGL_static.a | wc -l
+          ar -t libEGL_static.a | head -30
+      
+          echo ""
+          echo "=== ARCHIVE MEMBERS: libGLESv2_static.a ==="
+          ar -t libGLESv2_static.a | wc -l
+          ar -t libGLESv2_static.a | head -30
+      
+          echo ""
+          echo "=== LLVM AR ==="
+          llvm-ar -t libEGL_static.a | wc -l || true
+          llvm-ar -t libGLESv2_static.a | wc -l || true
+
       - name: Verify Static Libraries
         run: |
           cd angle-work/src/out/ios/obj
@@ -90,6 +118,17 @@ jobs:
           file libGLESv2_static.a
           ls -lh libGLESv2_static.a
           ar -t libGLESv2_static.a | head -20
+
+      - name: Inspect ANGLE Library Targets
+        run: |
+          cd angle-work/src
+      
+          echo "=== libEGL targets ==="
+          gn desc out/ios | grep -iE '(^|/)libEGL|libEGL'
+      
+          echo ""
+          echo "=== libGLES targets ==="
+          gn desc out/ios | grep -iE '(^|/)libGLES|libGLES'
 
       - name: Upload Static Archives
         uses: actions/upload-artifact@v4
