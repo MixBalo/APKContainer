@@ -6,11 +6,11 @@
 <div align="center">
   <h1><b>APKContainer</b></h1>
   <p><i>An app that let's you run Android apps on iOS!</i></p>
-
+<!--
    <a href="https://ko-fi.com/yourusername" target="_blank">
      <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi" height="41">
    </a>
-   <p><i>Ko-fi support not implemeted</i></p>
+   -->
 </div>
 <h6 align="center">
 
