@@ -50,7 +50,7 @@ jobs:
             angle-source-v2-${{ runner.os }}-
 
       - name: Fetch ANGLE Source Code
-        if: steps.cache-angle.outputs.cache-hit == 'true'
+        if: steps.cache-angle.outputs.cache-hit != 'true'
         run: |
           echo "ANGLE cache miss - fetching ANGLE..."
 
@@ -61,7 +61,7 @@ jobs:
           fetch angle
 
       - name: Sync ANGLE
-        if: steps.cache-angle.outputs.cache-hit != 'true'
+        if: steps.cache-angle.outputs.cache-hit == 'true'
         run: |
           echo "ANGLE cache hit - syncing dependencies..."
 
