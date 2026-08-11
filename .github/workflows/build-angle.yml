@@ -60,16 +60,12 @@ jobs:
               rm -rf "extract_$lib"
               mkdir -p "extract_$lib"
               
-              # ar t on a thin archive prints the relative path references.
-              # Copy each referenced .o file, flattening paths to avoid collisions.
-              ar t "$lib.a" | while read -r member; do
-                if [ -f "$member" ]; then
-                  flatname=$(echo "$member" | tr '/' '_')
-                  cp "$member" "extract_$lib/$flatname"
-                fi
-              done
+              # Use ar x to properly extract objects from thin archive
+              cd "extract_$lib"
+              $AR_CMD x "../$lib.a"
+              cd ..
               
-              # Repack all collected objects into a real (fat) archive
+              # Repack all extracted objects into a real (fat) archive
               find "extract_$lib" -type f -name "*.o" > "extract_$lib/objs.txt"
               $AR_CMD rcs "repacked/${lib%_static}.a" @"extract_$lib/objs.txt"
               
