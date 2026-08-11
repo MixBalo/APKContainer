@@ -2,12 +2,12 @@
 //  SettingsView.swift
 //  ApkContainer
 //
-//  Implemented: real SwiftUI Form with four sections — Distribution,
-//  Runtime, About, Diagnostics. Distribution path is probed via
+//  Implemented: real SwiftUI Form with five sections — Distribution,
+//  Appearance, Runtime, About, Diagnostics. Distribution path is probed via
 //  DistributionProbe (declared in Core/Runtime/DistributionProbe.swift).
 //  Re-scan Catalog calls catalog.load(); Clear All Caches calls
 //  SandboxManager.shared.clearAllCaches(). Version is read from the main
-//  bundle's Info dictionary.
+//  bundle's Info dictionary. Dark Mode toggle is persistent via @AppStorage.
 //  Stubbed:
 //    - Audio output device picker — no AVAudioEngine route enumeration yet.
 //    - Capability Matrix link — bundled doc not yet shipped in the app;
@@ -23,16 +23,15 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var catalog: AppCatalog
+    @EnvironmentObject private var themeManager: ThemeManager
 
     @State private var distribution: DistributionProbe.Kind = .unknown
-    @State private var angleDebugLayers = false
-    @State private var audioDevice: String = "Default"
-    @State private var rescanProgress = false
 
     private let audioDevices = ["Default", "Built-In Speaker", "Bluetooth"]
 
     var body: some View {
         Form {
+            appearanceSection
             distributionSection
             runtimeSection
             aboutSection
@@ -41,6 +40,16 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .task {
             distribution = await DistributionProbe.shared.detect()
+        }
+    }
+
+    private var appearanceSection: some View {
+        Section("Appearance") {
+            Toggle(isOn: $themeManager.isDarkModeEnabled) {
+                Label("Dark Mode", systemImage: "moon.fill")
+            }
+        } footer: {
+            Text("Enable dark mode for reduced eye strain in low-light environments.")
         }
     }
 
@@ -77,9 +86,9 @@ struct SettingsView: View {
             .disabled(true)
             .foregroundStyle(.secondary)
 
-            Toggle("ANGLE Debug Layers", isOn: $angleDebugLayers)
+            Toggle("ANGLE Debug Layers", isOn: .constant(false))
 
-            Picker(selection: $audioDevice) {
+            Picker(selection: .constant("Default")) {
                 ForEach(audioDevices, id: \.self) { Text($0).tag($0) }
             } label: {
                 Label("Audio Output", systemImage: "speaker.wave.2")
@@ -120,17 +129,13 @@ struct SettingsView: View {
         Section("Diagnostics") {
             Button {
                 Task {
-                    rescanProgress = true
                     await catalog.load()
-                    rescanProgress = false
                 }
             } label: {
                 HStack {
                     Label("Re-scan Catalog", systemImage: "arrow.triangle.2.circlepath")
-                    if rescanProgress { ProgressView() }
                 }
             }
-            .disabled(rescanProgress)
 
             Button(role: .destructive) {
                 SandboxManager.shared.clearAllCaches()
