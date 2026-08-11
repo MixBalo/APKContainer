@@ -43,7 +43,7 @@ Two separate problems, both required:
 - **Unsigned native code.** `.so` files pulled from an APK are unsigned ARM64 object code; iOS requires every executable page to belong to a codesigned binary. Requires either a custom in-process loader that maps them as data and executes via a pre-signed trampoline (jailbreak) or re-signing at install time under a provisioning profile that permits it.
 - **Per-app sandbox.** Each installed APK gets its own writable directory mimicking `/data/data/<package>/`, built on iOS's own sandboxed filesystem.
 
-**Target install method: [TBD — pick one and document why: jailbroken + tweak injection / TrollStore-style / dev-signed sideload].** This decision determines what "fully functional" can mean for non-jailbroken users and should be finalized and stated explicitly before further implementation.
+**Target install method: [Sidestore](https://sidestore.io/)** 
 
 ## Architecture
 
@@ -64,7 +64,7 @@ Build order:
 
 - Device: modern iPhone/iPad, arm64
 - [Sidestore](https://sidestore.io/) to install app ([LiveContainer](https://github.com/LiveContainer/LiveContainer) will be tested later on)
-- Sufficient storage to install APK's
+- Sufficient storage to install APKs
 
 ## Non-goals
 
