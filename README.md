@@ -4,7 +4,7 @@
    
 
 <div align="center">
-  <h1><b>APKContiner</b></h1>
+  <h1><b>APKContainer</b></h1>
   <p><i>An app that let's you run Android apps on iOS! </i></p>
 
    <a href="https://ko-fi.com/yourusername" target="_blank">
