@@ -14,11 +14,10 @@
 </div>
 <h6 align="center">
 
-
-> [!IMPORTANT]
-> I may abandon this project because of complexity and time it costs me to debug. I will try my best to continue but I may take a break. 
-
 # APKContainer
+
+> [!WARNING]
+> I may abandon this project because of complexity and time it costs me to debug. I will try my best to continue but I may take a break. 
 
 A LiveContainer-style iOS app that let's you installs and runs Android `.apk` packages on-device — pick an APK, it appears in a home-screen-style grid, tap to launch.
 
