@@ -45,38 +45,78 @@ jobs:
 
       - name: Convert Thin Archives to Fat Archives
         run: |
-          cd angle-work/src/out/ios/obj
-          mkdir -p repacked
+          cd angle-work/src/out/ios
+          mkdir -p obj/repacked
           
-          for lib in libEGL_static libGLESv2_static; do
-            echo "==> Processing $lib.a..."
+          # Helper function to extract and repack archives
+          repack_archive() {
+            local lib_name=$1
+            local archive_path="obj/$lib_name.a"
+            local output_path="obj/repacked/${lib_name%_static}.a"
+            
+            echo "==> Processing $lib_name.a..."
+            
+            if [ ! -f "$archive_path" ]; then
+              echo "ERROR: $archive_path not found!"
+              exit 1
+            fi
             
             # Check if it's a thin archive
-            if file "$lib.a" | grep -q "thin archive"; then
-              echo "  Thin archive detected. Converting to fat archive using libtool..."
+            if file "$archive_path" | grep -q "thin archive"; then
+              echo "  Thin archive detected. Extracting object files..."
               
-              # Use libtool to convert thin to fat archive
-              # libtool -static creates a fat archive from thin archive input
-              libtool -static -o "repacked/${lib%_static}.a" "$lib.a"
+              local extract_dir="obj/extract_$lib_name"
+              rm -rf "$extract_dir"
+              mkdir -p "$extract_dir"
               
-              # Verify conversion
-              if file "repacked/${lib%_static}.a" | grep -q "thin archive"; then
-                echo "  ERROR: Failed to convert thin archive to fat archive!"
-                echo "  Archive info:"
-                file "repacked/${lib%_static}.a"
+              # Extract thin archive - this will follow the references
+              cd "$extract_dir"
+              ar -x "../$lib_name.a" 2>&1 || {
+                echo "  ERROR: Failed to extract thin archive"
+                cd ..
+                exit 1
+              }
+              
+              # Count extracted files
+              local obj_count=$(find . -name "*.o" | wc -l)
+              echo "  Extracted $obj_count object files"
+              
+              if [ "$obj_count" -eq 0 ]; then
+                echo "  ERROR: No object files extracted! Thin archive may be broken."
+                cd ..
                 exit 1
               fi
               
-              echo "  ✓ Successfully converted to fat archive"
+              cd ..
+              
+              # Repack into a fat archive
+              echo "  Repacking into fat archive..."
+              ar -rcs "$output_path" "$extract_dir"/*.o
+              
+              # Verify result
+              if ! file "$output_path" | grep -q "thin archive"; then
+                local size=$(du -h "$output_path" | cut -f1)
+                echo "  ✓ Successfully created fat archive ($size)"
+              else
+                echo "  ERROR: Output is still a thin archive!"
+                exit 1
+              fi
+              
+              rm -rf "$extract_dir"
             else
               echo "  Regular (fat) archive detected. Copying as-is..."
-              cp "$lib.a" "repacked/${lib%_static}.a"
+              cp "$archive_path" "$output_path"
+              local size=$(du -h "$output_path" | cut -f1)
+              echo "  ✓ Copied fat archive ($size)"
             fi
             
-            echo "  Result:"
-            ls -lh "repacked/${lib%_static}.a"
-            file "repacked/${lib%_static}.a"
-          done
+            echo "  Details:"
+            ls -lh "$output_path"
+            file "$output_path"
+          }
+          
+          repack_archive "libEGL_static"
+          repack_archive "libGLESv2_static"
 
       - name: Upload Fat Archives
         uses: actions/upload-artifact@v4
