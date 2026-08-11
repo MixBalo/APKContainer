@@ -27,38 +27,57 @@ jobs:
       - name: Install depot_tools
         run: |
           if [ ! -d "$HOME/depot_tools" ]; then
-            git clone --depth=1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$HOME/depot_tools"
+            git clone --depth=1 \
+              https://chromium.googlesource.com/chromium/tools/depot_tools.git \
+              "$HOME/depot_tools"
           else
             echo "depot_tools restored from cache."
           fi
+
           echo "$HOME/depot_tools" >> "$GITHUB_PATH"
+
+      # ------------------------------------------------------------------
+      # ANGLE source
+      # ------------------------------------------------------------------
 
       - name: Cache ANGLE Source
         id: cache-angle
         uses: actions/cache@v4
         with:
           path: angle-work
-          key: angle-source-${{ runner.os }}-${{ steps.week.outputs.week }}-${{ hashFiles('.github/workflows/build-angle.yml') }}
+          key: angle-source-v2-${{ runner.os }}-${{ steps.week.outputs.week }}-${{ hashFiles('.github/workflows/build-angle.yml') }}
           restore-keys: |
-            angle-source-${{ runner.os }}-
+            angle-source-v2-${{ runner.os }}-
 
       - name: Fetch ANGLE Source Code
-        if: steps.cache-angle.outputs.cache-hit == 'true'
+        if: steps.cache-angle.outputs.cache-hit != 'true'
         run: |
+          echo "ANGLE cache miss - fetching ANGLE..."
+
           rm -rf angle-work
           mkdir -p angle-work
+
           cd angle-work
           fetch angle
 
-      - name: Sync ANGLE (if cached)
-        if: steps.cache-angle.outputs.cache-hit != 'true'
+      - name: Sync ANGLE
+        if: steps.cache-angle.outputs.cache-hit == 'true'
         run: |
-          cd angle-work
-          gclient sync --no-history --jobs=4 || true
+          echo "ANGLE cache hit - syncing dependencies..."
 
-      - name: Generate Build Files (gn)
+          cd angle-work
+          gclient sync --no-history --jobs=4
+
+      # ------------------------------------------------------------------
+      # Generate build files
+      # ------------------------------------------------------------------
+
+      - name: Generate Build Files (GN)
         run: |
           cd angle-work/src
+
+          rm -rf out/ios
+
           gn gen out/ios --args='
             target_os="ios"
             target_cpu="arm64"
@@ -72,63 +91,100 @@ jobs:
             complete_static_lib=true
           '
 
-      - name: Compile ANGLE (autoninja)
+      # ------------------------------------------------------------------
+      # Build
+      # ------------------------------------------------------------------
+
+      - name: Compile ANGLE
         run: |
           cd angle-work/src
-          autoninja -C out/ios libEGL_static libGLESv2_static
+
+          autoninja -C out/ios \
+            libEGL_static \
+            libGLESv2_static
+
+      # ------------------------------------------------------------------
+      # Inspect output
+      # ------------------------------------------------------------------
 
       - name: Inspect ANGLE Static Libraries
         run: |
           cd angle-work/src/out/ios/obj
-      
-          echo "=== FILE TYPES ==="
+
+          echo "========================================"
+          echo "FILE TYPES"
+          echo "========================================"
+
           file libEGL_static.a
           file libGLESv2_static.a
-      
+
           echo ""
-          echo "=== SIZES ==="
+          echo "========================================"
+          echo "SIZES"
+          echo "========================================"
+
           ls -lh libEGL_static.a
           ls -lh libGLESv2_static.a
-      
+
           echo ""
-          echo "=== ARCHIVE MEMBERS: libEGL_static.a ==="
+          echo "========================================"
+          echo "libEGL_static.a MEMBERS"
+          echo "========================================"
+
+          echo "Object count:"
           ar -t libEGL_static.a | wc -l
+
+          echo ""
+          echo "First objects:"
           ar -t libEGL_static.a | head -30
-      
+
           echo ""
-          echo "=== ARCHIVE MEMBERS: libGLESv2_static.a ==="
+          echo "========================================"
+          echo "libGLESv2_static.a MEMBERS"
+          echo "========================================"
+
+          echo "Object count:"
           ar -t libGLESv2_static.a | wc -l
-          ar -t libGLESv2_static.a | head -30
-      
+
           echo ""
-          echo "=== LLVM AR ==="
+          echo "First objects:"
+          ar -t libGLESv2_static.a | head -30
+
+          echo ""
+          echo "========================================"
+          echo "LLVM AR"
+          echo "========================================"
+
+          echo "libEGL:"
           llvm-ar -t libEGL_static.a | wc -l || true
+
+          echo "libGLESv2:"
           llvm-ar -t libGLESv2_static.a | wc -l || true
 
-      - name: Verify Static Libraries
-        run: |
-          cd angle-work/src/out/ios/obj
-      
-          echo "== libEGL_static.a =="
-          file libEGL_static.a
-          ls -lh libEGL_static.a
-          ar -t libEGL_static.a | head -20
-      
-          echo "== libGLESv2_static.a =="
-          file libGLESv2_static.a
-          ls -lh libGLESv2_static.a
-          ar -t libGLESv2_static.a | head -20
+      # ------------------------------------------------------------------
+      # Inspect GN targets
+      # ------------------------------------------------------------------
 
       - name: Inspect ANGLE Library Targets
         run: |
           cd angle-work/src
-      
-          echo "=== libEGL targets ==="
-          gn desc out/ios | grep -iE '(^|/)libEGL|libEGL'
-      
+
+          echo "========================================"
+          echo "libEGL targets"
+          echo "========================================"
+
+          gn desc out/ios | grep -iE '(^|/)libEGL|libEGL' || true
+
           echo ""
-          echo "=== libGLES targets ==="
-          gn desc out/ios | grep -iE '(^|/)libGLES|libGLES'
+          echo "========================================"
+          echo "libGLES targets"
+          echo "========================================"
+
+          gn desc out/ios | grep -iE '(^|/)libGLES|libGLES' || true
+
+      # ------------------------------------------------------------------
+      # Upload
+      # ------------------------------------------------------------------
 
       - name: Upload Static Archives
         uses: actions/upload-artifact@v4
