@@ -6,7 +6,8 @@ A LiveContainer-style iOS app that installs and runs Android `.apk` packages on-
 
 ## Status
 
-⚠️ Early / architecture stage. See the [capability matrix](docs/CAPABILITY_MATRIX.md) below for what actually works today.
+> [!IMPORTANT]
+> Early / architecture stage. See the [capability matrix](docs/CAPABILITY_MATRIX.md) below for what actually works today.
 
 ## Why this is hard (read before filing issues)
 
