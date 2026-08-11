@@ -1,4 +1,13 @@
-![Project Logo](.github/logo.jpg)
+<div align="center">
+   <img width="217" height="217" src="./.github/logo.jpg" alt="Logo">
+</div>
+   
+
+<div align="center">
+  <h1><b>APKContiner</b></h1>
+  <p><i>An app that let's you run Android apps on iOS! </i></p>
+</div>
+<h6 align="center">
 
 # APKContainer
 
