@@ -1,4 +1,4 @@
-![Project Logo](.github/logo.png)
+![Project Logo](.github/logo.jpg)
 
 # APKContainer
 
