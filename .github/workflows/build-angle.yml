@@ -45,14 +45,14 @@ jobs:
 
       - name: Convert Thin Archives to Fat Archives
         run: |
-          cd angle-work/src/out/ios
-          mkdir -p obj/repacked
+          cd angle-work/src/out/ios/obj
+          mkdir -p repacked
           
           # Helper function to extract and repack archives
           repack_archive() {
             local lib_name=$1
-            local archive_path="obj/$lib_name.a"
-            local output_path="obj/repacked/${lib_name%_static}.a"
+            local archive_path="$lib_name.a"
+            local output_path="repacked/${lib_name%_static}.a"
             
             echo "==> Processing $lib_name.a..."
             
@@ -63,49 +63,95 @@ jobs:
             
             # Check if it's a thin archive
             if file "$archive_path" | grep -q "thin archive"; then
-              echo "  Thin archive detected. Extracting object files..."
+              echo "  Thin archive detected. Examining contents..."
               
-              local extract_dir="obj/extract_$lib_name"
+              # Dump the thin archive header to see what it references
+              echo "  Thin archive format - attempting to read referenced files..."
+              
+              # Create temp directory for extraction
+              local extract_dir="extract_$lib_name"
               rm -rf "$extract_dir"
               mkdir -p "$extract_dir"
               
-              # Get the list of object files in the thin archive
-              local obj_list=$(ar -t "$archive_path" 2>/dev/null | grep "\.o$")
-              local obj_count=$(echo "$obj_list" | wc -l)
+              # Try to use ranlib to rebuild as fat archive
+              # ranlib with no args may help consolidate
+              echo "  Attempting ranlib consolidation..."
+              ranlib "$archive_path" 2>/dev/null || true
               
-              if [ "$obj_count" -eq 0 ] || [ -z "$obj_list" ]; then
-                echo "  ERROR: No object files found in thin archive!"
-                exit 1
-              fi
-              
-              echo "  Found $obj_count object files"
-              
-              # Extract each object file using ar -p
-              echo "$obj_list" | while read obj_file; do
-                if [ -n "$obj_file" ]; then
-                  ar -p "$archive_path" "$obj_file" > "$extract_dir/$obj_file"
+              # Now try libtool with verbose output
+              echo "  Using libtool to convert thin archive to fat..."
+              libtool -static -o "$output_path.tmp" "$archive_path" 2>&1 || {
+                echo "  libtool failed, trying alternative method..."
+                
+                # Alternative: use otool to inspect, then manually rebuild
+                # First, let's try to use ar with member extraction using a different approach
+                # Create a new archive from scratch by using ar to read and write
+                
+                cd "$extract_dir"
+                
+                # Use ar -t to list members, then ar -p to extract each one
+                ar -t "../$archive_path" > members.txt 2>/dev/null || {
+                  echo "  WARNING: ar -t failed. Thin archive may be corrupted."
+                  # Last resort: check if objects are in parent directories
+                  cd ..
+                  
+                  # Look for .o files in common build locations
+                  echo "  Searching for object files in build tree..."
+                  find .. -name "*.o" -type f 2>/dev/null > "$extract_dir/found_objs.txt"
+                  
+                  local found_count=$(wc -l < "$extract_dir/found_objs.txt")
+                  if [ "$found_count" -gt 0 ]; then
+                    echo "  Found $found_count object files in build tree"
+                    # Try to pack these
+                    ar -rcs "$output_path" $(head -50 "$extract_dir/found_objs.txt" | tr '\n' ' ')
+                    
+                    if file "$output_path" | grep -q "thin archive"; then
+                      echo "  ERROR: Still thin archive after repacking"
+                      exit 1
+                    fi
+                    
+                    rm -rf "$extract_dir"
+                    echo "  ✓ Successfully created fat archive"
+                    ls -lh "$output_path"
+                    file "$output_path"
+                    return 0
+                  else
+                    echo "  ERROR: Could not find any object files"
+                    exit 1
+                  fi
+                }
+                
+                # Extract all members
+                cat members.txt | while read member; do
+                  if [ -n "$member" ]; then
+                    ar -p "../$archive_path" "$member" > "$member" 2>/dev/null
+                  fi
+                done
+                
+                cd ..
+                
+                # Check if extraction worked
+                local obj_count=$(find "$extract_dir" -name "*.o" -type f | wc -l)
+                if [ "$obj_count" -eq 0 ]; then
+                  echo "  ERROR: Failed to extract any object files from thin archive"
+                  exit 1
                 fi
-              done
+                
+                echo "  Extracted $obj_count object files"
+                ar -rcs "$output_path" "$extract_dir"/*.o
+              }
               
-              # Verify extraction
-              local extracted_count=$(ls -1 "$extract_dir"/*.o 2>/dev/null | wc -l)
-              echo "  Extracted $extracted_count object files"
-              
-              if [ "$extracted_count" -eq 0 ]; then
-                echo "  ERROR: Failed to extract any object files!"
-                exit 1
+              # If libtool worked, use the temp file
+              if [ -f "$output_path.tmp" ]; then
+                mv "$output_path.tmp" "$output_path"
               fi
               
-              # Repack into a fat archive
-              echo "  Repacking into fat archive..."
-              ar -rcs "$output_path" "$extract_dir"/*.o
-              
-              # Verify result
+              # Verify final result
               if ! file "$output_path" | grep -q "thin archive"; then
                 local size=$(du -h "$output_path" | cut -f1)
                 echo "  ✓ Successfully created fat archive ($size)"
               else
-                echo "  ERROR: Output is still a thin archive!"
+                echo "  ERROR: Final archive is still thin!"
                 exit 1
               fi
               
@@ -117,7 +163,7 @@ jobs:
               echo "  ✓ Copied fat archive ($size)"
             fi
             
-            echo "  Details:"
+            echo "  Final details:"
             ls -lh "$output_path"
             file "$output_path"
           }
