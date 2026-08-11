@@ -69,25 +69,32 @@ jobs:
               rm -rf "$extract_dir"
               mkdir -p "$extract_dir"
               
-              # Extract thin archive - this will follow the references
-              cd "$extract_dir"
-              ar -x "../$lib_name.a" 2>&1 || {
-                echo "  ERROR: Failed to extract thin archive"
-                cd ..
-                exit 1
-              }
+              # Get the list of object files in the thin archive
+              local obj_list=$(ar -t "$archive_path" 2>/dev/null | grep "\.o$")
+              local obj_count=$(echo "$obj_list" | wc -l)
               
-              # Count extracted files
-              local obj_count=$(find . -name "*.o" | wc -l)
-              echo "  Extracted $obj_count object files"
-              
-              if [ "$obj_count" -eq 0 ]; then
-                echo "  ERROR: No object files extracted! Thin archive may be broken."
-                cd ..
+              if [ "$obj_count" -eq 0 ] || [ -z "$obj_list" ]; then
+                echo "  ERROR: No object files found in thin archive!"
                 exit 1
               fi
               
-              cd ..
+              echo "  Found $obj_count object files"
+              
+              # Extract each object file using ar -p
+              echo "$obj_list" | while read obj_file; do
+                if [ -n "$obj_file" ]; then
+                  ar -p "$archive_path" "$obj_file" > "$extract_dir/$obj_file"
+                fi
+              done
+              
+              # Verify extraction
+              local extracted_count=$(ls -1 "$extract_dir"/*.o 2>/dev/null | wc -l)
+              echo "  Extracted $extracted_count object files"
+              
+              if [ "$extracted_count" -eq 0 ]; then
+                echo "  ERROR: Failed to extract any object files!"
+                exit 1
+              fi
               
               # Repack into a fat archive
               echo "  Repacking into fat archive..."
