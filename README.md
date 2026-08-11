@@ -1,77 +1,111 @@
 <div align="center">
-   <img width="217" height="217" src="./.github/logo.jpg" alt="Logo">
+  <img width="217" height="217" src="./.github/logo.jpg" alt="APKContainer logo">
 </div>
-   
-
-<div align="center">
-  <h1><b>APKContainer</b></h1>
-  <p><i>An app that let's you run Android apps on iOS!</i></p>
-<!--
-   <a href="https://ko-fi.com/yourusername" target="_blank">
-     <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi" height="41">
-   </a>
-   -->
-</div>
-<h6 align="center">
 
 # APKContainer
 
-A LiveContainer-style iOS app that let's you installs and runs Android `.apk` packages on-device — pick an APK, it appears in a home-screen-style grid, tap to launch.
+Run Android .apk packages on iOS — a LiveContainer-style app that installs APKs on-device, shows them in a home-screen-like grid, and launches them inside a per-app container.
 
-**This is not an emulator in the traditional sense and not a simple "installer."** An APK targets a different OS's runtime (Dalvik/ART bytecode, Bionic libc, the Android native graphics/IPC stack). Since target devices are arm64, there's no CPU emulation needed for 64-bit native code — but nearly everything else about Android's OS layer has to be reimplemented well enough that the app believes it's running on Android.
+> This project is experimental and early-stage. See the capability matrix in docs/CAPABILITY_MATRIX.md for current status and known limitations.
+
+---
+
+## Quick summary
+
+- Purpose: Provide a container that lets you install and run arm64 Android APKs on modern iPhone/iPad devices (arm64), with a focus on native-heavy apps and games.
+- Not an emulator in the traditional sense — APKs target a different OS/runtime (Dalvik/ART, Bionic libc, Android native graphics and IPC).
+- Target install method: Sidestore (https://sidestore.io/)
+
+---
 
 ## Status
 
-> [!IMPORTANT]
-> Early / architecture stage. See the [capability matrix](docs/CAPABILITY_MATRIX.md) below for what actually works today.
+Early / architecture stage.
 
-## Why this is hard (read before filing issues)
+If you want to file issues, please read the "Why this is hard" and "Platform constraints" sections below first — many questions are answered there.
 
-Two separate problems, both required:
+See docs/CAPABILITY_MATRIX.md for a feature-by-feature breakdown of what works today.
 
-1. **Managed code** — most app logic ships as Dalvik/ART bytecode. Needs either an ART/Dalvik interpreter (or JIT) embedded in the app, or AOT translation of DEX to native code.
-2. **Native code** — game engines (Unity/IL2CPP, Cocos2d, etc.) ship `.so` libraries in `lib/arm64-v8a/`, compiled against Bionic libc and the Android NDK ABI. Running them requires a Bionic libc shim, a custom ELF loader, JNI bridging back to the managed-code layer, and an EGL/OpenGL ES shim that routes into Metal.
+---
 
-`armeabi-v7a`-only (32-bit) APKs are **out of scope** — iOS has not supported 32-on-64 execution since iOS 11.
+## Key constraints (read before filing issues)
 
-## Platform constraints that shape everything else
+Why running APKs on iOS is hard — two distinct problems must be solved:
 
-- **JIT is blocked.** iOS enforces W^X for third-party apps; the `dynamic-codesigning` entitlement isn't granted outside jailbreak/enterprise contexts. This project must pick one of:
-  - Jailbroken device (entitlement restriction lifted) — full JIT/interpreter, best compatibility
-  - Interpreter-only ART (no JIT) — works on non-jailbroken devices, significantly slower
-  - AOT-compile DEX to a native binary at install time — still requires a codesigning path that allows re-signing generated code (enterprise/dev cert)
-- **Unsigned native code.** `.so` files pulled from an APK are unsigned ARM64 object code; iOS requires every executable page to belong to a codesigned binary. Requires either a custom in-process loader that maps them as data and executes via a pre-signed trampoline (jailbreak) or re-signing at install time under a provisioning profile that permits it.
-- **Per-app sandbox.** Each installed APK gets its own writable directory mimicking `/data/data/<package>/`, built on iOS's own sandboxed filesystem.
+1. Managed code
+   - Most Android app logic ships as Dalvik/ART bytecode (`classes.dex`). You need an ART/Dalvik interpreter (or JIT) embedded or an AOT approach that translates DEX to native.
+2. Native code
+   - Many apps (especially games) include `.so` libraries built against Bionic libc and the Android NDK ABI. Those must be loaded and run inside a compatible native environment.
 
-**Target install method: [Sidestore](https://sidestore.io/)** 
+Important platform constraints that shape design and trade-offs:
 
-## Architecture
+- JIT is blocked on non-jailbroken iOS devices due to W^X and lack of the `dynamic-codesigning` entitlement. Options are:
+  - Jailbroken devices (full JIT/interpreter possible),
+  - Interpreter-only ART (works without JIT but is slower), or
+  - AOT-compile DEX to a native binary at install time (requires a codesigning path).
+- Unsigned native code: `.so` files from APKs are unsigned; iOS requires executable pages to belong to a codesigned binary.
+- Per-app sandboxing: each APK gets its own writable directory that mimics Android's `/data/data/<package>` inside the iOS sandbox.
+- 32-bit-only APKs (`armeabi-v7a`) are out of scope — iOS doesn't support 32-on-64 execution since iOS 11.
 
-Build order:
+---
 
-1. **APK parser/installer** — unzip, parse binary `AndroidManifest.xml` and `classes.dex`, extract `lib/arm64-v8a/*.so`, extract icon/resources, register in a local catalog (SQLite/plist), create sandboxed data dir.
-2. **DEX/ART execution layer** — the core of the project. Either adapt an existing open-source Dalvik/ART interpreter, or write a DEX bytecode interpreter scoped to the instruction subset real apps use. Framework surface (Activity lifecycle, common `android.*` classes) is implemented explicitly and incrementally — unimplemented calls are stubbed with logged no-ops, never silently ignored.
-3. **Bionic libc / native loader shim** — custom ELF loader for `.so`s, symbol resolution against the libc shim, JNI environment (`JNIEnv*`, `JavaVM*`) so native code can call back into layer 2.
-4. **Graphics bridge** — EGL/OpenGL ES shim whose `eglSwapBuffers` etc. render into a `CAMetalLayer`, via GL→Metal translation (e.g. adapting ANGLE) or draw-call interception. This is the most CPU/GPU-costly piece and the one that determines whether a game renders at all vs. black-screens.
-5. **Input/audio/lifecycle bridging** — touch → `MotionEvent` equivalents, audio buffers → `AVAudioEngine`, Activity lifecycle driven by the container UI.
-6. **Container UI** — SwiftUI: grid of installed apps, `.apk` import via document picker, tap-to-launch full-screen container view, per-app detail/uninstall, running-apps list if backgrounding is supported.
+## Architecture (high level)
 
-## Benchmark target
+Planned build order and core components:
 
-**Among Us** (Unity/IL2CPP) is the integration-test target — it exercises native code execution, real-framerate OpenGL ES rendering, multitouch, sockets, and audio all at once. It is the *last* thing to try, not the first: get a minimal, mostly-Java, non-native test APK running end-to-end through every layer first.
+1. APK parser / installer
+   - Unzip APK, parse AndroidManifest.xml and classes.dex, extract arm64 libraries (`lib/arm64-v8a/*.so`), icons/resources, and register the app in a local catalog (SQLite/plist). Create an on-disk per-app container.
+2. DEX / ART execution layer
+   - The core: embed or adapt an existing interpreter for Dalvik/ART bytecode, or implement a scoped DEX interpreter.
+3. Bionic libc / native loader shim
+   - Custom ELF loader for `.so` files, symbol resolution against a libc shim, and a JNI environment (`JNIEnv*`, `JavaVM*`) so native libraries can call back into the managed layer.
+4. Graphics bridge
+   - Provide an EGL/OpenGL ES shim that renders into a CAMetalLayer (via GL→Metal translation, ANGLE adaptation, or draw-call interception).
+5. Input, audio, and lifecycle bridging
+   - Map iOS input/audio/lifecycle events to Android equivalents (MotionEvent, audio buffers, Activity lifecycle).
+6. Container UI
+   - SwiftUI-based launcher grid, APK import via document picker, per-app details/uninstall, and a full-screen container view for running apps.
+
+---
+
+## Benchmark / integration target
+
+Among Us (Unity/IL2CPP) is the main integration target — it exercises native code execution, GL rendering, multitouch, sockets, and audio.
+
+---
 
 ## Requirements
 
-- Device: modern iPhone/iPad, arm64
-- [Sidestore](https://sidestore.io/) to install app ([LiveContainer](https://github.com/LiveContainer/LiveContainer) will be tested later on)
-- Sufficient storage to install APKs
+- Device: modern iPhone/iPad (arm64)
+- Sidestore to install the container app: https://sidestore.io/
+- Sufficient storage for APKs
 
-## Non-goals
+---
 
-- 32-bit (`armeabi-v7a`-only) APKs
-- Full Android API surface parity
-- App Store distribution (given the JIT/codesigning constraints above, this is unlikely to be shippable there — state this plainly rather than after the fact)
+## Non-goals / Out of scope
+
+- 32-bit (`armeabi-v7a`) APKs
+- Full Android API parity with upstream Android
+- App Store distribution (given the JIT and codesigning constraints, App Store distribution is unlikely)
+
+---
 
 ## Contributing
 
-By contributing to this project via Pull Requests or issue submissions, you explicitly agree to the terms of the [APKContainer CLA](CLA.md).
+Contributions are welcome. By opening issues or pull requests, you agree to the [APKContainer CLA](CLA.md).
+
+If you're filing issues, please:
+
+- Search existing issues and the capability matrix first.
+- Include concrete repro steps and the APK (or a link) when possible.
+- If the APK is large or proprietary, provide a minimal repro or logs.
+
+See CONTRIBUTING.md (if present) for coding guidelines.
+
+---
+
+## License & contact
+
+See LICENSE.md (if present) for the project's license.
+
+For questions or collaboration, open an issue or reach out via the repository's discussions (if enabled).
