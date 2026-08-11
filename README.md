@@ -45,9 +45,9 @@ Build order:
 
 ## Requirements
 
-- Device: modern iPhone, arm64
-- Jailbreak status: **[TBD]**
-- Provisioning profile type: **[TBD]**
+- Device: modern iPhone/iPad, arm64
+- [Sidestore](https://sidestore.io/) to install app ([LiveContainer](https://github.com/LiveContainer/LiveContainer) will be tested later on)
+- Sufficient storage to install APK's
 
 ## Non-goals
 
