@@ -1,6 +1,8 @@
-# Android APK Runner for iOS
+![Project Logo](.github/logo.png)
 
-A LiveContainer-style iOS app that installs and runs Android `.apk` packages on-device — pick an APK, it appears in a home-screen-style grid, tap to launch.
+# APKContainer
+
+A LiveContainer-style iOS app that let's you installs and runs Android `.apk` packages on-device — pick an APK, it appears in a home-screen-style grid, tap to launch.
 
 **This is not an emulator in the traditional sense and not a simple "installer."** An APK targets a different OS's runtime (Dalvik/ART bytecode, Bionic libc, the Android native graphics/IPC stack). Since target devices are arm64, there's no CPU emulation needed for 64-bit native code — but nearly everything else about Android's OS layer has to be reimplemented well enough that the app believes it's running on Android.
 
