@@ -43,42 +43,34 @@ jobs:
           cd angle-work/src
           autoninja -C out/ios libEGL_static libGLESv2_static
 
-      - name: Ensure Fat Archives
+      - name: Convert Thin Archives to Fat Archives
         run: |
           cd angle-work/src/out/ios/obj
           mkdir -p repacked
           
-          # macOS /usr/bin/ar IS llvm-ar and handles thin archives correctly
-          AR_CMD=$(which ar)
-          
           for lib in libEGL_static libGLESv2_static; do
             echo "==> Processing $lib.a..."
             
+            # Check if it's a thin archive
             if file "$lib.a" | grep -q "thin archive"; then
-              echo "  Thin archive detected. Repacking to regular archive..."
+              echo "  Thin archive detected. Converting to fat archive using libtool..."
               
-              rm -rf "extract_$lib"
-              mkdir -p "extract_$lib"
+              # Use libtool to convert thin to fat archive
+              # libtool -static creates a fat archive from thin archive input
+              libtool -static -o "repacked/${lib%_static}.a" "$lib.a"
               
-              # Use ar x to properly extract objects from thin archive
-              cd "extract_$lib"
-              $AR_CMD x "../$lib.a"
-              cd ..
+              # Verify conversion
+              if file "repacked/${lib%_static}.a" | grep -q "thin archive"; then
+                echo "  ERROR: Failed to convert thin archive to fat archive!"
+                echo "  Archive info:"
+                file "repacked/${lib%_static}.a"
+                exit 1
+              fi
               
-              # Repack all extracted objects into a real (fat) archive
-              find "extract_$lib" -type f -name "*.o" > "extract_$lib/objs.txt"
-              $AR_CMD rcs "repacked/${lib%_static}.a" @"extract_$lib/objs.txt"
-              
-              rm -rf "extract_$lib"
+              echo "  ✓ Successfully converted to fat archive"
             else
-              echo "  Regular archive detected. Copying as-is..."
+              echo "  Regular (fat) archive detected. Copying as-is..."
               cp "$lib.a" "repacked/${lib%_static}.a"
-            fi
-            
-            # Hard fail if we somehow still produced a thin archive
-            if file "repacked/${lib%_static}.a" | grep -q "thin archive"; then
-              echo "ERROR: repacked/${lib%_static}.a is still a thin archive!"
-              exit 1
             fi
             
             echo "  Result:"
