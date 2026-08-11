@@ -69,6 +69,7 @@ jobs:
             angle_enable_gl=false
             angle_enable_metal=true
             use_thin_archives=false
+            complete_static_lib=true
           '
 
       - name: Compile ANGLE (autoninja)
@@ -76,68 +77,25 @@ jobs:
           cd angle-work/src
           autoninja -C out/ios libEGL_static libGLESv2_static
 
-      - name: Convert Thin Archives to Fat Archives
+      - name: Verify Static Libraries
         run: |
           cd angle-work/src/out/ios/obj
-          mkdir -p repacked
+      
+          echo "== libEGL_static.a =="
+          file libEGL_static.a
+          ls -lh libEGL_static.a
+          ar -t libEGL_static.a | head -20
+      
+          echo "== libGLESv2_static.a =="
+          file libGLESv2_static.a
+          ls -lh libGLESv2_static.a
+          ar -t libGLESv2_static.a | head -20
 
-          repack_archive() {
-            local lib_name=$1
-            local archive_path="$lib_name.a"
-            local output_name="${lib_name%_static}.a"
-            local output_path="repacked/$output_name"
-
-            echo "==> Processing $archive_path..."
-
-            if [ ! -f "$archive_path" ]; then
-              echo "ERROR: $archive_path not found!"
-              ls -la
-              exit 1
-            fi
-
-            rm -rf "extract_$lib_name"
-            mkdir -p "extract_$lib_name"
-            cd "extract_$lib_name"
-
-            echo "  Extracting objects from $archive_path..."
-            ar -x "../$archive_path"
-
-            local obj_count
-            obj_count=$(find . -name "*.o" -type f | wc -l | tr -d ' ')
-            if [ "$obj_count" -eq 0 ]; then
-              echo "  ERROR: No .o files extracted!"
-              cd ..
-              rm -rf "extract_$lib_name"
-              exit 1
-            fi
-
-            echo "  Repacking $obj_count objects into $output_name..."
-            find . -name "*.o" -type f -print0 | xargs -0 ar -rcs "../$output_path"
-
-            cd ..
-
-            local final_size
-            final_size=$(stat -f%z "$output_path" 2>/dev/null || stat -c%s "$output_path" 2>/dev/null || echo "0")
-
-            if [ "$final_size" -lt 1024 ]; then
-              echo "  ERROR: Archive too small (${final_size} bytes)!"
-              rm -rf "extract_$lib_name"
-              exit 1
-            fi
-
-            echo "  ✓ Success: $output_path (${final_size} bytes)"
-            file "$output_path"
-            ls -lh "$output_path"
-
-            rm -rf "extract_$lib_name"
-          }
-
-          repack_archive "libEGL_static"
-          repack_archive "libGLESv2_static"
-
-      - name: Upload Fat Archives
+      - name: Upload Static Archives
         uses: actions/upload-artifact@v4
         with:
           name: angle-ios-static-libs
-          path: angle-work/src/out/ios/obj/repacked/*.a
+          path: |
+            angle-work/src/out/ios/obj/libEGL_static.a
+            angle-work/src/out/ios/obj/libGLESv2_static.a
           retention-days: 7
