@@ -43,7 +43,7 @@ jobs:
             angle-source-${{ runner.os }}-
 
       - name: Fetch ANGLE Source Code
-        if: steps.cache-angle.outputs.cache-hit != 'true'
+        if: steps.cache-angle.outputs.cache-hit == 'true'
         run: |
           rm -rf angle-work
           mkdir -p angle-work
@@ -51,7 +51,7 @@ jobs:
           fetch angle
 
       - name: Sync ANGLE (if cached)
-        if: steps.cache-angle.outputs.cache-hit == 'true'
+        if: steps.cache-angle.outputs.cache-hit != 'true'
         run: |
           cd angle-work
           gclient sync --no-history --jobs=4 || true
