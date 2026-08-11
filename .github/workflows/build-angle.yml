@@ -3,148 +3,259 @@ name: Build ANGLE (iOS / ARM64)
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build-angle:
     name: Build Static Libraries
     runs-on: macos-latest
-    
+
     steps:
-      # ================================================================
+      # ==============================================================
       # Checkout
-      # ================================================================
-    
+      # ==============================================================
+
       - name: Checkout Repository
-        uses: actions/checkout@v4
-    
-      # ================================================================
+        uses: actions/checkout@v6
+
+      # ==============================================================
       # Cache key
-      # ================================================================
-    
-      - name: Get Week Number for Cache Key
+      # ==============================================================
+
+      - name: Get Cache Week
         id: week
         shell: bash
         run: |
+          set -euo pipefail
           echo "week=$(date +%Y-%U)" >> "$GITHUB_OUTPUT"
-    
-      # ================================================================
+
+      # ==============================================================
       # depot_tools
-      # ================================================================
-    
+      # ==============================================================
+
       - name: Cache depot_tools
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/depot_tools
           key: depot-tools-${{ runner.os }}-${{ steps.week.outputs.week }}
           restore-keys: |
             depot-tools-${{ runner.os }}-
-    
+
       - name: Install depot_tools
         shell: bash
         run: |
           set -euo pipefail
-    
+
           if [ ! -d "$HOME/depot_tools" ]; then
             echo "Installing depot_tools..."
+
             git clone --depth=1 \
               https://chromium.googlesource.com/chromium/tools/depot_tools.git \
               "$HOME/depot_tools"
           else
             echo "depot_tools restored from cache."
           fi
-    
+
           echo "$HOME/depot_tools" >> "$GITHUB_PATH"
-    
-      # ================================================================
-      # ANGLE source
-      # ================================================================
-    
+
+      # ==============================================================
+      # ANGLE source cache
+      # ==============================================================
+
       - name: Cache ANGLE Source
         id: cache-angle
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: angle-work
-          key: angle-source-v3-${{ runner.os }}-${{ steps.week.outputs.week }}-${{ hashFiles('.github/workflows/build-angle.yml') }}
+          key: angle-source-v4-${{ runner.os }}-${{ steps.week.outputs.week }}-${{ hashFiles('.github/workflows/build-angle.yml') }}
           restore-keys: |
-            angle-source-v3-${{ runner.os }}-
-    
+            angle-source-v4-${{ runner.os }}-
+
+      # ==============================================================
+      # Fetch ANGLE
+      # ==============================================================
+
       - name: Fetch ANGLE Source Code
         if: steps.cache-angle.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
-    
+
           echo "ANGLE cache miss."
-          echo "Fetching ANGLE..."
-    
+          echo "Fetching ANGLE source..."
+
           rm -rf angle-work
           mkdir -p angle-work
-    
+
           cd angle-work
+
           fetch angle
-    
-      - name: Sync ANGLE
-        if: steps.cache-angle.outputs.cache-hit == 'true'
+
+      # ==============================================================
+      # Always synchronize ANGLE dependencies
+      # ==============================================================
+
+      - name: Synchronize ANGLE
         shell: bash
         run: |
           set -euo pipefail
-    
-          echo "ANGLE cache hit."
-          echo "Synchronizing dependencies..."
-    
+
+          echo "Synchronizing ANGLE dependencies..."
+
           cd angle-work
+
+          if [ ! -f ".gclient" ]; then
+            echo "ERROR: .gclient was not found."
+            echo "Contents of angle-work:"
+            find . -maxdepth 2 -type f | head -100
+            exit 1
+          fi
+
           gclient sync --no-history --jobs=4
-    
-      # ================================================================
-      # Patch ANGLE static-library targets
+
+      # ==============================================================
+      # Locate actual ANGLE source directory
       #
-      # IMPORTANT:
+      # DO NOT assume angle-work/src.
+      # ==============================================================
+      
+      - name: Locate ANGLE Source Directory
+        id: angle-source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Searching for ANGLE BUILD.gn..."
+
+          ANGLE_SRC=""
+
+          while IFS= read -r build_file; do
+            if grep -q 'angle_static_library("libGLESv2_static")' "$build_file" \
+              && grep -q 'angle_static_library("libEGL_static")' "$build_file"; then
+
+              ANGLE_SRC="$(dirname "$build_file")"
+              break
+            fi
+          done < <(find "$GITHUB_WORKSPACE/angle-work" \
+                    -type f \
+                    -name BUILD.gn \
+                    -print)
+
+          if [ -z "$ANGLE_SRC" ]; then
+            echo ""
+            echo "ERROR: Could not locate ANGLE BUILD.gn containing:"
+            echo "  libGLESv2_static"
+            echo "  libEGL_static"
+            echo ""
+            echo "All BUILD.gn files found:"
+            find "$GITHUB_WORKSPACE/angle-work" \
+              -type f \
+              -name BUILD.gn \
+              -print \
+              | sort || true
+
+            echo ""
+            echo "ANGLE directory tree:"
+            find "$GITHUB_WORKSPACE/angle-work" \
+              -maxdepth 3 \
+              -type d \
+              -print \
+              | sort \
+              | head -200 || true
+
+            exit 1
+          fi
+
+          echo "ANGLE source directory:"
+          echo "$ANGLE_SRC"
+
+          echo "ANGLE_SRC=$ANGLE_SRC" >> "$GITHUB_ENV"
+          echo "angle_src=$ANGLE_SRC" >> "$GITHUB_OUTPUT"
+
+      # ==============================================================
+      # Verify source
+      # ==============================================================
+
+      - name: Verify ANGLE Source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=================================================="
+          echo "ANGLE SOURCE"
+          echo "=================================================="
+
+          echo "$ANGLE_SRC"
+
+          echo ""
+          echo "BUILD.gn:"
+          ls -lh "$ANGLE_SRC/BUILD.gn"
+
+          echo ""
+          echo "ANGLE git revision:"
+          git -C "$ANGLE_SRC" rev-parse HEAD || true
+
+          echo ""
+          echo "Required targets:"
+          grep -n \
+            -E 'angle_static_library\("(libGLESv2_static|libEGL_static)"\)' \
+            "$ANGLE_SRC/BUILD.gn"
+
+      # ==============================================================
+      # Patch static libraries
       #
-      # complete_static_lib is a GN TARGET property.
-      # It is NOT a global gn --args variable.
+      # complete_static_lib is a GN target property.
       #
-      # We therefore patch the actual libGLESv2_static and
-      # libEGL_static targets.
-      #
-      # Chromium also requires the thin_archive config to be removed
-      # for a distributable static library.
-      # ================================================================
-    
+      # Removing thin_archive from the targets is necessary because
+      # the resulting .a files must contain the actual object files.
+      # ==============================================================
+
       - name: Configure Complete Static Libraries
         shell: bash
         run: |
           set -euo pipefail
-    
-          cd angle-work/src
-    
+
+          cd "$ANGLE_SRC"
+
           python3 <<'PY'
           from pathlib import Path
-    
+
           path = Path("BUILD.gn")
-          text = path.read_text()
-    
-          def find_target_block(text, target_name):
+
+          if not path.exists():
+              raise SystemExit(
+                  "ERROR: BUILD.gn does not exist at "
+                  f"{path.resolve()}"
+              )
+
+          text = path.read_text(encoding="utf-8")
+
+
+          def find_target_block(text: str, target_name: str):
               marker = f'angle_static_library("{target_name}")'
-    
+
               start = text.find(marker)
+
               if start == -1:
                   raise RuntimeError(
                       f"Could not find {marker} in BUILD.gn"
                   )
-    
-              # Find the opening brace.
+
               brace_start = text.find("{", start)
+
               if brace_start == -1:
                   raise RuntimeError(
                       f"Could not find opening '{{' for {target_name}"
                   )
-    
+
               depth = 0
               in_string = False
               escape = False
-    
+
               for i in range(brace_start, len(text)):
                   c = text[i]
-    
+
                   if in_string:
                       if escape:
                           escape = False
@@ -152,344 +263,448 @@ jobs:
                           escape = True
                       elif c == '"':
                           in_string = False
+
                       continue
-    
+
                   if c == '"':
                       in_string = True
+
                   elif c == "{":
                       depth += 1
+
                   elif c == "}":
                       depth -= 1
+
                       if depth == 0:
                           return start, i + 1
-    
+
               raise RuntimeError(
                   f"Could not find closing '}}' for {target_name}"
               )
-    
-          def patch_target(text, target_name):
+
+
+          def patch_target(text: str, target_name: str):
               start, end = find_target_block(text, target_name)
-    
+
               block = text[start:end]
-    
+
               print("")
               print("=" * 80)
               print(f"ORIGINAL {target_name}")
               print("=" * 80)
               print(block)
-    
-              # Add complete_static_lib directly to the target.
+
+              # ------------------------------------------------------
+              # Add complete_static_lib.
+              # ------------------------------------------------------
+
               if "complete_static_lib = true" not in block:
                   brace = block.find("{")
+
                   block = (
                       block[:brace + 1]
                       + "\n  complete_static_lib = true"
                       + block[brace + 1:]
                   )
-    
-              # Remove the global thin archive configuration from this
-              # target. This is required for a redistributable .a.
+
+              # ------------------------------------------------------
+              # Remove thin archive config from this target.
+              #
+              # ANGLE/Chromium may inherit this configuration through
+              # configs. Removing it locally prevents creation of
+              # unusable thin archives.
+              # ------------------------------------------------------
+
               thin_config = '//build/config/compiler:thin_archive'
-    
-              if thin_config not in block:
+
+              if thin_config in block:
+                  block = block.replace(
+                      thin_config,
+                      ""
+                  )
+
+              # If the target did not explicitly contain the config,
+              # add a configs subtraction so inherited configuration
+              # is removed from this target.
+              if (
+                  'configs -= [ "//build/config/compiler:thin_archive" ]'
+                  not in block
+              ):
                   brace = block.find("{")
+
                   block = (
                       block[:brace + 1]
                       + '\n  configs -= [ "//build/config/compiler:thin_archive" ]'
                       + block[brace + 1:]
                   )
-    
+
               text = text[:start] + block + text[end:]
-    
+
               print("")
               print("=" * 80)
               print(f"PATCHED {target_name}")
               print("=" * 80)
               print(block)
-    
+
               return text
-    
-          # These are the two libraries we are distributing.
-          text = patch_target(text, "libGLESv2_static")
-          text = patch_target(text, "libEGL_static")
-    
-          path.write_text(text)
-    
+
+
+          text = patch_target(
+              text,
+              "libGLESv2_static"
+          )
+
+          text = patch_target(
+              text,
+              "libEGL_static"
+          )
+
+          path.write_text(
+              text,
+              encoding="utf-8"
+          )
+
           print("")
           print("=" * 80)
           print("PATCH COMPLETE")
           print("=" * 80)
           PY
-    
-      # ================================================================
+
+      # ==============================================================
       # Verify patch
-      # ================================================================
-    
-      - name: Verify ANGLE Static Library Configuration
+      # ==============================================================
+
+      - name: Verify Static Library Configuration
         shell: bash
         run: |
           set -euo pipefail
-    
-          cd angle-work/src
-    
-          echo "=================================================="
-          echo "libGLESv2_static configuration"
-          echo "=================================================="
-    
-          grep -n -A25 -B2 \
-            'angle_static_library("libGLESv2_static")' \
-            BUILD.gn
-    
-          echo ""
-          echo "=================================================="
-          echo "libEGL_static configuration"
-          echo "=================================================="
-    
-          grep -n -A25 -B2 \
-            'angle_static_library("libEGL_static")' \
-            BUILD.gn
-    
-      # ================================================================
-      # Generate GN files
-      # ================================================================
-    
-      - name: Generate Build Files
-        shell: bash
-        run: |
-          set -euo pipefail
-    
-          cd angle-work/src
-    
-          rm -rf out/ios
-    
-          gn gen out/ios --args='
-            target_os="ios"
-            target_cpu="arm64"
-            target_environment="device"
-    
-            is_debug=false
-    
-            ios_enable_code_signing=false
-    
-            angle_enable_vulkan=false
-            angle_enable_gl=false
-            angle_enable_metal=true
-    
-            use_thin_archives=false
-          '
-    
-      # ================================================================
-      # Verify GN target properties
-      # ================================================================
-    
-      - name: Inspect GN Static Targets
-        shell: bash
-        run: |
-          set -euo pipefail
-    
-          cd angle-work/src
-    
+
           echo "=================================================="
           echo "libGLESv2_static"
           echo "=================================================="
-    
-          gn desc out/ios //:libGLESv2_static
-    
+
+          grep -n -A30 -B2 \
+            'angle_static_library("libGLESv2_static")' \
+            "$ANGLE_SRC/BUILD.gn"
+
           echo ""
           echo "=================================================="
           echo "libEGL_static"
           echo "=================================================="
-    
+
+          grep -n -A30 -B2 \
+            'angle_static_library("libEGL_static")' \
+            "$ANGLE_SRC/BUILD.gn"
+
+          echo ""
+          echo "Checking complete_static_lib..."
+
+          grep -q \
+            'complete_static_lib = true' \
+            "$ANGLE_SRC/BUILD.gn"
+
+          echo "complete_static_lib found."
+
+      # ==============================================================
+      # Generate GN build files
+      # ==============================================================
+
+      - name: Generate Build Files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$ANGLE_SRC"
+
+          rm -rf out/ios
+
+          gn gen out/ios --args='
+            target_os="ios"
+            target_cpu="arm64"
+            target_environment="device"
+
+            is_debug=false
+
+            ios_enable_code_signing=false
+
+            angle_enable_vulkan=false
+            angle_enable_gl=false
+            angle_enable_metal=true
+
+            use_thin_archives=false
+          '
+
+      # ==============================================================
+      # Verify GN configuration
+      # ==============================================================
+
+      - name: Inspect GN Static Targets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$ANGLE_SRC"
+
+          echo "=================================================="
+          echo "libGLESv2_static"
+          echo "=================================================="
+
+          gn desc out/ios //:libGLESv2_static
+
+          echo ""
+          echo "=================================================="
+          echo "libEGL_static"
+          echo "=================================================="
+
           gn desc out/ios //:libEGL_static
-    
-      # ================================================================
-      # Build
-      # ================================================================
-    
+
+      # ==============================================================
+      # Compile
+      # ==============================================================
+
       - name: Compile ANGLE
         shell: bash
         run: |
           set -euo pipefail
-    
-          cd angle-work/src
-    
-          autoninja -C out/ios \
-            libEGL_static \
-            libGLESv2_static
-    
-      # ================================================================
-      # Locate libraries
-      # ================================================================
-    
+
+          cd "$ANGLE_SRC"
+
+          echo "Building libEGL_static..."
+          autoninja -C out/ios libEGL_static
+
+          echo ""
+          echo "Building libGLESv2_static..."
+          autoninja -C out/ios libGLESv2_static
+
+      # ==============================================================
+      # Locate generated archives
+      # ==============================================================
+
       - name: Locate Generated Libraries
         shell: bash
         run: |
           set -euo pipefail
-    
-          cd angle-work/src
-    
+
           echo "=================================================="
-          echo "Generated .a files"
+          echo "Generated static archives"
           echo "=================================================="
-    
-          find out/ios/obj \
+
+          find "$ANGLE_SRC/out/ios" \
             -type f \
-            \( -name "*.a" -o -name "*.thin.a" \) \
+            \( \
+              -name "*.a" \
+              -o \
+              -name "*.thin.a" \
+            \) \
             -print \
             | sort
-    
-      # ================================================================
-      # Verify final archives
-      # ================================================================
-    
+
+      # ==============================================================
+      # Verify expected archive paths
+      # ==============================================================
+
+      - name: Verify Archive Paths
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          EGL="$ANGLE_SRC/out/ios/obj/libEGL_static.a"
+          GLES="$ANGLE_SRC/out/ios/obj/libGLESv2_static.a"
+
+          if [ ! -f "$EGL" ]; then
+            echo "ERROR: Missing:"
+            echo "$EGL"
+            exit 1
+          fi
+
+          if [ ! -f "$GLES" ]; then
+            echo "ERROR: Missing:"
+            echo "$GLES"
+            exit 1
+          fi
+
+          echo "Found:"
+          echo "$EGL"
+          echo "$GLES"
+
+      # ==============================================================
+      # Validate final archives
+      # ==============================================================
+
       - name: Verify Static Libraries
         shell: bash
         run: |
           set -euo pipefail
-    
-          cd angle-work/src/out/ios/obj
-    
-          EGL="libEGL_static.a"
-          GLES="libGLESv2_static.a"
-    
+
+          EGL="$ANGLE_SRC/out/ios/obj/libEGL_static.a"
+          GLES="$ANGLE_SRC/out/ios/obj/libGLESv2_static.a"
+
           echo "=================================================="
           echo "FILE TYPES"
           echo "=================================================="
-    
+
           file "$EGL"
           file "$GLES"
-    
+
           echo ""
           echo "=================================================="
           echo "SIZES"
           echo "=================================================="
-    
+
           ls -lh "$EGL"
           ls -lh "$GLES"
-    
+
           EGL_SIZE=$(stat -f%z "$EGL")
           GLES_SIZE=$(stat -f%z "$GLES")
-    
+
           echo ""
-          echo "libEGL_static.a:    ${EGL_SIZE} bytes"
+          echo "libEGL_static.a: ${EGL_SIZE} bytes"
           echo "libGLESv2_static.a: ${GLES_SIZE} bytes"
-    
-          # ANGLE static libraries should absolutely not be a few KB.
-          # Fail instead of uploading bad artifacts.
+
+          # ANGLE static libraries should be substantially larger
+          # than a few KB.
           if [ "$EGL_SIZE" -lt 1000000 ]; then
             echo ""
             echo "ERROR: libEGL_static.a is suspiciously small."
             exit 1
           fi
-    
+
           if [ "$GLES_SIZE" -lt 1000000 ]; then
             echo ""
             echo "ERROR: libGLESv2_static.a is suspiciously small."
             exit 1
           fi
-    
+
           echo ""
           echo "=================================================="
           echo "ARCHIVE MEMBER COUNTS"
           echo "=================================================="
-    
-          EGL_COUNT=$(/usr/bin/ar -t "$EGL" | wc -l | tr -d ' ')
-          GLES_COUNT=$(/usr/bin/ar -t "$GLES" | wc -l | tr -d ' ')
-    
-          echo "libEGL_static.a members:    $EGL_COUNT"
+
+          EGL_COUNT=$(
+            /usr/bin/ar -t "$EGL" |
+            wc -l |
+            tr -d ' '
+          )
+
+          GLES_COUNT=$(
+            /usr/bin/ar -t "$GLES" |
+            wc -l |
+            tr -d ' '
+          )
+
+          echo "libEGL_static.a members: $EGL_COUNT"
           echo "libGLESv2_static.a members: $GLES_COUNT"
-    
+
           if [ "$EGL_COUNT" -lt 10 ]; then
+            echo ""
             echo "ERROR: libEGL_static.a contains too few objects."
             exit 1
           fi
-    
+
           if [ "$GLES_COUNT" -lt 10 ]; then
+            echo ""
             echo "ERROR: libGLESv2_static.a contains too few objects."
             exit 1
           fi
-    
-          echo ""
-          echo "=================================================="
-          echo "FIRST ARCHIVE MEMBERS"
-          echo "=================================================="
-    
-          echo "--- libEGL_static.a ---"
-          /usr/bin/ar -t "$EGL" | head -30
-    
-          echo ""
-          echo "--- libGLESv2_static.a ---"
-          /usr/bin/ar -t "$GLES" | head -30
-    
+
           echo ""
           echo "=================================================="
           echo "LLVM AR TEST"
           echo "=================================================="
-    
+
           llvm-ar -t "$EGL" | head -10
           llvm-ar -t "$GLES" | head -10
-    
+
           echo ""
           echo "=================================================="
           echo "ARM64 OBJECT CHECK"
           echo "=================================================="
-    
+
           TMP_EGL=$(mktemp -d)
           TMP_GLES=$(mktemp -d)
-    
+
           trap 'rm -rf "$TMP_EGL" "$TMP_GLES"' EXIT
-    
-          cd "$TMP_EGL"
-          /usr/bin/ar -x "$OLDPWD/$EGL"
-    
-          cd "$TMP_GLES"
-          /usr/bin/ar -x "$OLDPWD/$GLES"
-    
+
+          (
+            cd "$TMP_EGL"
+            /usr/bin/ar -x "$EGL"
+          )
+
+          (
+            cd "$TMP_GLES"
+            /usr/bin/ar -x "$GLES"
+          )
+
           EGL_ARM64=0
           GLES_ARM64=0
-    
+
           for obj in "$TMP_EGL"/*.o; do
             if [ -f "$obj" ]; then
-              if file "$obj" | grep -q "arm64"; then
+              if file "$obj" | grep -qi "arm64"; then
                 EGL_ARM64=$((EGL_ARM64 + 1))
               fi
             fi
           done
-    
+
           for obj in "$TMP_GLES"/*.o; do
             if [ -f "$obj" ]; then
-              if file "$obj" | grep -q "arm64"; then
+              if file "$obj" | grep -qi "arm64"; then
                 GLES_ARM64=$((GLES_ARM64 + 1))
               fi
             fi
           done
-    
-          echo "ARM64 EGL objects:  $EGL_ARM64"
+
+          echo "ARM64 EGL objects: $EGL_ARM64"
           echo "ARM64 GLES objects: $GLES_ARM64"
-    
+
           if [ "$EGL_ARM64" -eq 0 ]; then
+            echo ""
             echo "ERROR: No ARM64 objects found in libEGL_static.a."
             exit 1
           fi
-    
+
           if [ "$GLES_ARM64" -eq 0 ]; then
+            echo ""
             echo "ERROR: No ARM64 objects found in libGLESv2_static.a."
             exit 1
           fi
-    
+
           echo ""
-          echo "Static libraries passed validation."
-    
-      # ================================================================
+          echo "=================================================="
+          echo "STATIC LIBRARIES PASSED VALIDATION"
+          echo "=================================================="
+
+      # ==============================================================
+      # Copy artifacts to a simple directory
+      # ==============================================================
+
+      - name: Prepare Artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf "$GITHUB_WORKSPACE/angle-artifacts"
+          mkdir -p "$GITHUB_WORKSPACE/angle-artifacts"
+
+          cp \
+            "$ANGLE_SRC/out/ios/obj/libEGL_static.a" \
+            "$GITHUB_WORKSPACE/angle-artifacts/"
+
+          cp \
+            "$ANGLE_SRC/out/ios/obj/libGLESv2_static.a" \
+            "$GITHUB_WORKSPACE/angle-artifacts/"
+
+          echo "Artifacts:"
+          ls -lh "$GITHUB_WORKSPACE/angle-artifacts"
+
+      # ==============================================================
       # Upload
-      # ================================================================
-    
+      # ==============================================================
+
       - name: Upload Static Archives
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: angle-ios-static-libs
-          path: |
-            angle-work/src/out/ios/obj/libEGL_static.a
-            angle-work/src/out/ios/obj/libGLESv2_static.a
+          name: angle-ios-arm64-static-libs
+          path: angle-artifacts/
           if-no-files-found: error
           retention-days: 7
