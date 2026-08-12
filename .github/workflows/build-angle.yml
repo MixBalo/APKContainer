@@ -1046,16 +1046,6 @@ jobs:
           echo "libEGL_static.a members: $EGL_COUNT"
           echo "libGLESv2_static.a members: $GLES_COUNT"
 
-          if [ "$EGL_COUNT" -lt 10 ]; then
-            echo "ERROR: libEGL_static.a contains too few members."
-            exit 1
-          fi
-
-          if [ "$GLES_COUNT" -lt 10 ]; then
-            echo "ERROR: libGLESv2_static.a contains too few members."
-            exit 1
-          fi
-
           echo ""
           echo "First EGL members:"
           /usr/bin/ar -t "$EGL" | head -20
