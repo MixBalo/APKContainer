@@ -231,7 +231,7 @@ jobs:
             --reset \
             --jobs="$(sysctl -n hw.ncpu)"
 
-            - name: Build ANGLE iOS ARM64 static libraries
+      - name: Build ANGLE iOS ARM64 static libraries
         shell: bash
         env:
           ANGLE_SRC: ${{ github.workspace }}/angle-work
