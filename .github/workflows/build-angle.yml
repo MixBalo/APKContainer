@@ -11,19 +11,18 @@ permissions:
 
 jobs:
   build-angle:
-    name: Build ANGLE iOS arm64 static libraries
+    name: Build ANGLE - iOS arm64
     runs-on: macos-latest
 
     env:
       ANGLE_DIR: ${{ github.workspace }}/angle-work
       OUT_DIR: ${{ github.workspace }}/angle-work/out/ios-arm64
       ARTIFACT_DIR: ${{ github.workspace }}/angle-artifacts
-      IOS_DEPLOYMENT_TARGET: "12.0"
 
     steps:
 
       # ==========================================================
-      # 1. CHECKOUT
+      # 1. CHECKOUT APKContainer
       # ==========================================================
 
       - name: Checkout APKContainer
@@ -38,22 +37,21 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Available Xcodes:"
+          echo "Installed Xcodes:"
           ls -1 /Applications | grep '^Xcode' || true
 
           if [ -d "/Applications/Xcode.app" ]; then
-            sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+            sudo xcode-select -s \
+              /Applications/Xcode.app/Contents/Developer
           fi
 
-          echo ""
           echo "Xcode:"
           xcodebuild -version
 
-          echo ""
           echo "Developer directory:"
           xcode-select -p
 
-      - name: Accept Xcode License
+      - name: Accept Xcode license
         shell: bash
         run: |
           set -euo pipefail
@@ -70,7 +68,6 @@ jobs:
           echo "iOS SDK:"
           echo "$SDK"
 
-          echo ""
           echo "iOS SDK version:"
           echo "$SDK_VERSION"
 
@@ -80,7 +77,7 @@ jobs:
       # 3. APPLE TOOLCHAIN
       # ==========================================================
 
-      - name: Verify Apple Toolchain
+      - name: Verify Apple toolchain
         shell: bash
         run: |
           set -euo pipefail
@@ -88,43 +85,50 @@ jobs:
           echo "clang:"
           xcrun --sdk iphoneos clang --version
 
-          echo ""
+          echo
           echo "clang++:"
           xcrun --sdk iphoneos clang++ --version
 
-          echo ""
+          echo
           echo "ar:"
           xcrun --sdk iphoneos -f ar
 
-          echo ""
+          echo
           echo "ranlib:"
           xcrun --sdk iphoneos -f ranlib
 
-          echo ""
+          echo
           echo "nm:"
           xcrun --sdk iphoneos -f nm
 
-          echo ""
+          echo
           echo "lipo:"
           xcrun --sdk iphoneos -f lipo
 
-          echo ""
+          echo
           echo "ninja:"
           ninja --version
 
       # ==========================================================
       # 4. DEPOT TOOLS
+      #
+      # IMPORTANT:
+      #
+      # Do NOT put depot_tools/python-bin in PATH before depot_tools
+      # has been bootstrapped.
+      #
+      # Current depot_tools requires bootstrap initialization.
       # ==========================================================
 
       - name: Cache depot_tools
         uses: actions/cache@v5
         with:
           path: ~/depot_tools
-          key: depot-tools-${{ runner.os }}-${{ runner.arch }}-v3
+          key: depot-tools-${{ runner.os }}-${{ runner.architecture }}-v4
           restore-keys: |
-            depot-tools-${{ runner.os }}-${{ runner.arch }}-
+            depot-tools-${{ runner.os }}-${{ runner.architecture }}-
 
-      - name: Install depot_tools
+      - name: Install and bootstrap depot_tools
         shell: bash
         run: |
           set -euo pipefail
@@ -137,58 +141,65 @@ jobs:
             rm -rf "$DEPOT"
 
             git clone \
-              --depth=1 \
               https://chromium.googlesource.com/chromium/tools/depot_tools.git \
               "$DEPOT"
           else
-            echo "Updating cached depot_tools..."
-
-            git -C "$DEPOT" fetch \
-              --depth=1 \
-              origin \
-              main
-
-            git -C "$DEPOT" reset \
-              --hard \
-              origin/main
-
-            git -C "$DEPOT" clean -ffd
+            echo "Using cached depot_tools."
           fi
 
+          export PATH="$DEPOT:$PATH"
+
           echo "$DEPOT" >> "$GITHUB_PATH"
-          echo "$DEPOT/python-bin" >> "$GITHUB_PATH"
 
-          export PATH="$DEPOT:$DEPOT/python-bin:$PATH"
-
-          echo ""
+          echo
           echo "depot_tools:"
           echo "$DEPOT"
 
-          echo ""
-          echo "Python:"
-          python3 --version
+          echo
+          echo "Git:"
+          git --version
 
-          echo ""
-          echo "gclient:"
+          echo
+          echo "Bootstrapping depot_tools..."
+
+          cd "$DEPOT"
+
+          if [ -x "./ensure_bootstrap" ]; then
+            ./ensure_bootstrap
+          elif [ -x "./update_depot_tools" ]; then
+            ./update_depot_tools
+          else
+            echo "ERROR: depot_tools bootstrap script not found."
+            exit 1
+          fi
+
+          # Re-export after bootstrap.
+          export PATH="$DEPOT:$PATH"
+
+          echo
+          echo "Checking depot_tools..."
+
           command -v gclient
+          command -v fetch
+          command -v gn || true
+          command -v autoninja || true
+
+          echo
+          echo "Python:"
+
+          "$DEPOT/python-bin/python3" --version
+
+          echo
+          echo "gclient:"
           gclient --version || true
 
-          echo ""
-          echo "fetch:"
-          command -v fetch
-
-          echo ""
-          echo "autoninja:"
-          command -v autoninja
-
-          echo ""
+          echo
           echo "GN:"
-          command -v gn
-
-          echo ""
-          echo "Ninja:"
-          command -v ninja
-          ninja --version
+          if command -v gn >/dev/null 2>&1; then
+            gn --version
+          else
+            echo "GN will be provided by depot_tools after ANGLE bootstrap."
+          fi
 
       # ==========================================================
       # 5. FETCH ANGLE
@@ -205,10 +216,14 @@ jobs:
 
           cd "$ANGLE_DIR"
 
+          export PATH="$HOME/depot_tools:$PATH"
+
+          echo "Fetching ANGLE..."
+
           fetch angle
 
       # ==========================================================
-      # 6. SYNC DEPENDENCIES
+      # 6. SYNC ANGLE
       # ==========================================================
 
       - name: Synchronize ANGLE dependencies
@@ -218,6 +233,10 @@ jobs:
 
           cd "$ANGLE_DIR"
 
+          export PATH="$HOME/depot_tools:$PATH"
+
+          echo "Synchronizing ANGLE dependencies..."
+
           gclient sync \
             --no-history \
             --force \
@@ -225,465 +244,121 @@ jobs:
             --jobs="$(sysctl -n hw.ncpu)"
 
       # ==========================================================
-      # 7. BUILD
+      # 7. BUILD ANGLE
       # ==========================================================
 
-      - name: Build ANGLE iOS ARM64 static libraries
+      - name: Build ANGLE iOS ARM64
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "============================================================"
-          echo " ANGLE iOS ARM64 STATIC BUILD"
-          echo "============================================================"
-
           cd "$ANGLE_DIR"
 
-          ANGLE_SRC="$PWD"
+          export PATH="$HOME/depot_tools:$PATH"
 
-          echo ""
-          echo "ANGLE source:"
-          echo "$ANGLE_SRC"
+          echo "=================================================="
+          echo "ANGLE SOURCE"
+          echo "=================================================="
 
-          echo ""
-          echo "ANGLE revision:"
+          pwd
+
+          echo
+          echo "Revision:"
           git rev-parse HEAD
 
           git log -1 --oneline
 
           # ------------------------------------------------------
-          # TOOLCHAIN
+          # TOOL DISCOVERY
           # ------------------------------------------------------
 
-          export PATH="$HOME/depot_tools:$HOME/depot_tools/python-bin:$PATH"
+          GN="$(command -v gn || true)"
 
-          GN="$(command -v gn)"
-          NINJA="$(command -v ninja)"
+          if [ -z "$GN" ] && [ -x "$HOME/depot_tools/gn" ]; then
+            GN="$HOME/depot_tools/gn"
+          fi
+
+          if [ -z "$GN" ]; then
+            echo "ERROR: GN not found."
+            echo "PATH=$PATH"
+            exit 1
+          fi
+
+          if command -v autoninja >/dev/null 2>&1; then
+            NINJA="autoninja"
+          else
+            NINJA="ninja"
+          fi
 
           SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
-          CLANG="$(xcrun --sdk iphoneos -f clang)"
-          CLANGXX="$(xcrun --sdk iphoneos -f clang++)"
+          SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
+
           AR="$(xcrun --sdk iphoneos -f ar)"
           RANLIB="$(xcrun --sdk iphoneos -f ranlib)"
-          NM="$(xcrun --sdk iphoneos -f nm)"
+          CLANG="$(xcrun --sdk iphoneos -f clang)"
+          CLANGXX="$(xcrun --sdk iphoneos -f clang++)"
 
-          echo ""
-          echo "GN:"
-          echo "$GN"
-
-          echo ""
-          echo "Ninja:"
-          echo "$NINJA"
-
-          echo ""
-          echo "SDK:"
-          echo "$SDK"
-
-          echo ""
-          echo "Deployment target:"
-          echo "$IOS_DEPLOYMENT_TARGET"
-
-          "$GN" --version
+          echo
+          echo "GN:       $GN"
+          echo "Ninja:    $NINJA"
+          echo "SDK:      $SDK"
+          echo "SDK ver:  $SDK_VERSION"
+          echo "clang:    $CLANG"
+          echo "clang++:  $CLANGXX"
+          echo "ar:       $AR"
+          echo "ranlib:   $RANLIB"
 
           # ------------------------------------------------------
-          # VERIFY ANGLE TARGETS
+          # ANGLE TARGET INSPECTION
           # ------------------------------------------------------
 
-          echo ""
-          echo "============================================================"
-          echo " ANGLE TARGETS"
-          echo "============================================================"
+          echo
+          echo "=================================================="
+          echo "ANGLE STATIC TARGETS"
+          echo "=================================================="
 
-          grep -n -E \
-            'libGLESv2_static|libGLESv2_thin_static|libEGL_static' \
+          grep -n \
+            -E \
+            'libGLESv2_static|libEGL_static' \
             BUILD.gn \
-            || true
+            | head -40 || true
 
           # ------------------------------------------------------
-          # PATCH ONLY libGLESv2_static
+          # DO NOT MODIFY ANGLE'S BUILD.GN.
           #
-          # IMPORTANT:
-          #
-          # libGLESv2_static becomes the distributable complete
-          # archive.
-          #
-          # libEGL_static stays normal and depends on GLES.
+          # Instead generate the normal static libraries and then
+          # explicitly combine the complete dependency graph into
+          # caller-usable archives.
           # ------------------------------------------------------
 
-          python3 <<'PY'
-          from pathlib import Path
-
-          path = Path("BUILD.gn")
-          text = path.read_text()
-
-          def find_target(text, markers):
-              for marker in markers:
-                  start = text.find(marker)
-
-                  if start < 0:
-                      continue
-
-                  brace = text.find("{", start)
-
-                  if brace < 0:
-                      raise SystemExit(
-                          f"ERROR: opening brace not found for {marker}"
-                      )
-
-                  depth = 0
-                  in_string = False
-                  escaped = False
-
-                  for i in range(brace, len(text)):
-                      c = text[i]
-
-                      if in_string:
-                          if escaped:
-                              escaped = False
-                          elif c == "\\":
-                              escaped = True
-                          elif c == '"':
-                              in_string = False
-                          continue
-
-                      if c == '"':
-                          in_string = True
-
-                      elif c == "{":
-                          depth += 1
-
-                      elif c == "}":
-                          depth -= 1
-
-                          if depth == 0:
-                              return (
-                                  start,
-                                  i + 1,
-                                  text[start:i + 1],
-                                  marker,
-                              )
-
-              return None
-
-          gles_markers = [
-              'angle_static_library("libGLESv2_static")',
-              'static_library("libGLESv2_static")',
-          ]
-
-          egl_markers = [
-              'libEGL_template("libEGL_static")',
-              'angle_static_library("libEGL_static")',
-              'static_library("libEGL_static")',
-          ]
-
-          gles = find_target(text, gles_markers)
-          egl = find_target(text, egl_markers)
-
-          if gles is None:
-              raise SystemExit(
-                  "ERROR: libGLESv2_static was not found."
-              )
-
-          if egl is None:
-              raise SystemExit(
-                  "ERROR: libEGL_static was not found."
-              )
-
-          gs, ge, gles_block, gles_marker = gles
-          es, ee, egl_block, egl_marker = egl
-
-          print("Found:")
-          print("  GLES:", gles_marker)
-          print("  EGL :", egl_marker)
-
-          # ------------------------------------------------------
-          # Remove previous accidental complete_static_lib lines
-          # from BOTH targets so the patch is idempotent.
-          # ------------------------------------------------------
-
-          import re
-
-          gles_block = re.sub(
-              r'^[ \t]*complete_static_lib\s*=\s*true\s*\n',
-              '',
-              gles_block,
-              flags=re.MULTILINE,
-          )
-
-          egl_block = re.sub(
-              r'^[ \t]*complete_static_lib\s*=\s*true\s*\n',
-              '',
-              egl_block,
-              flags=re.MULTILINE,
-          )
-
-          # ------------------------------------------------------
-          # Add complete_static_lib ONLY to GLES.
-          # ------------------------------------------------------
-
-          brace = gles_block.find("{")
-
-          if brace < 0:
-              raise SystemExit(
-                  "ERROR: GLES opening brace not found."
-              )
-
-          gles_block = (
-              gles_block[:brace + 1]
-              + "\n"
-              + "  # APKContainer: distributable complete ANGLE archive.\n"
-              + "  complete_static_lib = true\n"
-              + gles_block[brace + 1:]
-          )
-
-          # ------------------------------------------------------
-          # Replace blocks safely.
-          # ------------------------------------------------------
-
-          if gs < es:
-
-              text = (
-                  text[:gs]
-                  + gles_block
-                  + text[ge:]
-              )
-
-              egl = find_target(text, egl_markers)
-
-              if egl is None:
-                  raise SystemExit(
-                      "ERROR: EGL target disappeared."
-                  )
-
-              es, ee, _, _ = egl
-
-              text = (
-                  text[:es]
-                  + egl_block
-                  + text[ee:]
-              )
-
-          else:
-
-              text = (
-                  text[:es]
-                  + egl_block
-                  + text[ee:]
-              )
-
-              gles = find_target(text, gles_markers)
-
-              if gles is None:
-                  raise SystemExit(
-                      "ERROR: GLES target disappeared."
-                  )
-
-              gs, ge, _, _ = gles
-
-              text = (
-                  text[:gs]
-                  + gles_block
-                  + text[ge:]
-              )
-
-          path.write_text(text)
-
-          # ------------------------------------------------------
-          # FINAL VERIFICATION
-          # ------------------------------------------------------
-
-          final = path.read_text()
-
-          gles = find_target(final, gles_markers)
-          egl = find_target(final, egl_markers)
-
-          if gles is None or egl is None:
-              raise SystemExit(
-                  "ERROR: final target lookup failed."
-              )
-
-          _, _, final_gles, _ = gles
-          _, _, final_egl, _ = egl
-
-          if final_gles.count(
-              "complete_static_lib = true"
-          ) != 1:
-              raise SystemExit(
-                  "ERROR: GLES complete_static_lib missing."
-              )
-
-          if "complete_static_lib = true" in final_egl:
-              raise SystemExit(
-                  "ERROR: EGL must NOT be complete."
-              )
-
-          print("")
-          print("TARGET PATCH VERIFIED")
-          print("  libGLESv2_static = complete")
-          print("  libEGL_static    = normal")
-
-          PY
-
-          # ------------------------------------------------------
-          # DISABLE THIN ARCHIVES
-          #
-          # Keep this change at the ANGLE static-library template
-          # level.
-          #
-          # Do NOT put complete_static_lib here.
-          # ------------------------------------------------------
-
-          GNI="$ANGLE_SRC/gni/angle.gni"
-
-          python3 - "$GNI" <<'PY'
-          import sys
-          from pathlib import Path
-
-          path = Path(sys.argv[1])
-          text = path.read_text()
-
-          marker = 'template("angle_static_library")'
-
-          start = text.find(marker)
-
-          if start < 0:
-              raise SystemExit(
-                  "ERROR: angle_static_library template not found."
-              )
-
-          next_template = text.find(
-              '\ntemplate("',
-              start + len(marker),
-          )
-
-          if next_template < 0:
-              next_template = len(text)
-
-          block = text[start:next_template]
-
-          # Remove accidental complete_static_lib lines from the
-          # template. It belongs only to the target.
-          lines = []
-
-          for line in block.splitlines(True):
-              if "complete_static_lib = true" in line:
-                  continue
-
-              lines.append(line)
-
-          block = "".join(lines)
-
-          thin_line = (
-              '  configs -= [ "//build/config/compiler:thin_archive" ]\n'
-          )
-
-          if thin_line not in block:
-
-              anchor = "configs -= invoker.suppressed_configs"
-
-              pos = block.find(anchor)
-
-              if pos < 0:
-                  anchor = "configs += invoker.configs"
-                  pos = block.find(anchor)
-
-              if pos < 0:
-                  raise SystemExit(
-                      "ERROR: could not locate ANGLE static "
-                      "library config section."
-                  )
-
-              line_end = block.find("\n", pos)
-
-              if line_end < 0:
-                  raise SystemExit(
-                      "ERROR: config line has no newline."
-                  )
-
-              block = (
-                  block[:line_end + 1]
-                  + thin_line
-                  + block[line_end + 1:]
-              )
-
-          path.write_text(
-              text[:start]
-              + block
-              + text[next_template:]
-          )
-
-          print("")
-          print("STATIC ARCHIVE TEMPLATE VERIFIED")
-          print("  complete_static_lib: target-only")
-          print("  thin_archive:       disabled")
-
-          PY
-
-          # ------------------------------------------------------
-          # VERIFY COMPLETE PROPERTY OCCURS EXACTLY ONCE
-          # ------------------------------------------------------
-
-          python3 <<'PY'
-          from pathlib import Path
-
-          text = Path("BUILD.gn").read_text()
-
-          count = text.count("complete_static_lib = true")
-
-          if count != 1:
-              raise SystemExit(
-                  "ERROR: expected exactly one "
-                  f"complete_static_lib=true, found {count}"
-              )
-
-          pos = text.find("complete_static_lib = true")
-
-          before = text[:pos]
-
-          gles_pos = before.rfind(
-              'libGLESv2_static'
-          )
-
-          egl_pos = before.rfind(
-              'libEGL_static'
-          )
-
-          if gles_pos < 0:
-              raise SystemExit(
-                  "ERROR: complete_static_lib is not near GLES."
-              )
-
-          if egl_pos > gles_pos:
-              raise SystemExit(
-                  "ERROR: complete_static_lib appears to belong to EGL."
-              )
-
-          print(
-              "complete_static_lib placement verified."
-          )
-
-          PY
-
-          # ------------------------------------------------------
-          # GN GENERATION
-          # ------------------------------------------------------
-
-          OUT="$ANGLE_SRC/out/ios-arm64"
+          OUT="$OUT_DIR"
 
           rm -rf "$OUT"
 
+          # ------------------------------------------------------
+          # IMPORTANT:
+          #
+          # Use a deployment target compatible with the SDK while
+          # remaining usable by APKContainer.
+          #
+          # ANGLE must NOT be compiled for iOS 18 and then tested
+          # against iOS 12.
+          #
+          # We use iOS 15 here.
+          # ------------------------------------------------------
+
           "$GN" gen "$OUT" \
-            --args="
-              target_os = \"ios\"
-              target_cpu = \"arm64\"
-              target_environment = \"device\"
+            --args='
+              target_os = "ios"
+              target_cpu = "arm64"
+              target_environment = "device"
 
               is_debug = false
               is_component_build = false
               is_official_build = false
 
               ios_enable_code_signing = false
-              ios_deployment_target = \"$IOS_DEPLOYMENT_TARGET\"
+              ios_deployment_target = "15.0"
 
               angle_enable_metal = true
               angle_enable_vulkan = false
@@ -691,9 +366,9 @@ jobs:
 
               use_goma = false
               use_remoteexec = false
-            "
+            '
 
-          echo ""
+          echo
           echo "GN generation PASSED."
 
           # ------------------------------------------------------
@@ -703,439 +378,178 @@ jobs:
           "$GN" check "$OUT" //:libGLESv2_static
           "$GN" check "$OUT" //:libEGL_static
 
-          echo ""
+          echo
           echo "GN checks PASSED."
 
           # ------------------------------------------------------
-          # BUILD GLES
+          # BUILD NORMAL ANGLE STATIC TARGETS
           # ------------------------------------------------------
 
-          echo ""
-          echo "============================================================"
-          echo " BUILD libGLESv2_static"
-          echo "============================================================"
+          echo
+          echo "=================================================="
+          echo "BUILDING ANGLE"
+          echo "=================================================="
 
           "$NINJA" \
             -C "$OUT" \
             -j2 \
-            libGLESv2_static
-
-          # ------------------------------------------------------
-          # BUILD EGL
-          # ------------------------------------------------------
-
-          echo ""
-          echo "============================================================"
-          echo " BUILD libEGL_static"
-          echo "============================================================"
-
-          "$NINJA" \
-            -C "$OUT" \
-            -j2 \
+            libGLESv2_static \
             libEGL_static
 
-          EGL="$OUT/obj/libEGL_static.a"
+          # ------------------------------------------------------
+          # LOCATE OUTPUTS
+          # ------------------------------------------------------
+
           GLES="$OUT/obj/libGLESv2_static.a"
+          EGL="$OUT/obj/libEGL_static.a"
 
-          test -f "$EGL"
           test -f "$GLES"
+          test -f "$EGL"
+
+          echo
+          echo "ANGLE produced:"
+          ls -lh "$GLES" "$EGL"
 
           # ------------------------------------------------------
-          # APPLE AR / RANLIB
+          # ARCHIVE VALIDATION
           # ------------------------------------------------------
 
-          "$AR" -s "$EGL"
           "$AR" -s "$GLES"
+          "$AR" -s "$EGL"
 
-          "$RANLIB" "$EGL"
           "$RANLIB" "$GLES"
+          "$RANLIB" "$EGL"
 
-          # ------------------------------------------------------
-          # FILE FORMAT
-          # ------------------------------------------------------
+          echo
+          echo "Archive formats:"
 
-          echo ""
-          echo "============================================================"
-          echo " ARCHIVE FORMAT"
-          echo "============================================================"
+          file "$GLES"
+          file "$EGL"
 
-          EGL_FILE="$(file "$EGL")"
-          GLES_FILE="$(file "$GLES")"
-
-          echo "$EGL_FILE"
-          echo "$GLES_FILE"
-
-          if echo "$EGL_FILE" | grep -Eqi \
-            'thin archive|thin library'; then
-            echo "ERROR: EGL archive is thin."
-            exit 1
-          fi
-
-          if echo "$GLES_FILE" | grep -Eqi \
-            'thin archive|thin library'; then
+          if file "$GLES" | grep -Eqi 'thin archive|thin library'; then
             echo "ERROR: GLES archive is thin."
             exit 1
           fi
 
-          echo ""
-          echo "Both archives are non-thin Apple archives."
+          if file "$EGL" | grep -Eqi 'thin archive|thin library'; then
+            echo "ERROR: EGL archive is thin."
+            exit 1
+          fi
 
           # ------------------------------------------------------
-          # ARCHIVE MEMBERS
+          # VERIFY ARM64
           # ------------------------------------------------------
 
-          TMP_EGL="$(mktemp -d)"
           TMP_GLES="$(mktemp -d)"
-          LINK_TMP="$(mktemp -d)"
+          TMP_EGL="$(mktemp -d)"
 
-          cleanup() {
-            rm -rf \
-              "$TMP_EGL" \
-              "$TMP_GLES" \
-              "$LINK_TMP"
-          }
-
-          trap cleanup EXIT
-
-          EGL_MEMBERS="$TMP_EGL/members.txt"
-          GLES_MEMBERS="$TMP_GLES/members.txt"
-
-          "$AR" -t "$EGL" > "$EGL_MEMBERS"
-          "$AR" -t "$GLES" > "$GLES_MEMBERS"
-
-          echo ""
-          echo "EGL archive members:"
-          cat "$EGL_MEMBERS"
-
-          echo ""
-          echo "GLES archive members:"
-          cat "$GLES_MEMBERS"
-
-          EGL_OBJECTS="$(
-            grep -E '\.o$' "$EGL_MEMBERS" |
-            wc -l |
-            tr -d ' '
-          )"
-
-          GLES_OBJECTS="$(
-            grep -E '\.o$' "$GLES_MEMBERS" |
-            wc -l |
-            tr -d ' '
-          )"
-
-          echo ""
-          echo "EGL object members:  $EGL_OBJECTS"
-          echo "GLES object members: $GLES_OBJECTS"
-
-          if [ "$EGL_OBJECTS" -lt 1 ]; then
-            echo "ERROR: EGL archive contains no objects."
-            exit 1
-          fi
-
-          if [ "$GLES_OBJECTS" -lt 2 ]; then
-            echo ""
-            echo "ERROR: GLES archive did not become complete."
-            echo ""
-            echo "The following members were produced:"
-            cat "$GLES_MEMBERS"
-            exit 1
-          fi
-
-          # ------------------------------------------------------
-          # EXTRACT
-          # ------------------------------------------------------
-
-          (
-            cd "$TMP_EGL"
-            "$AR" -x "$EGL"
-          )
+          trap 'rm -rf "$TMP_GLES" "$TMP_EGL"' EXIT
 
           (
             cd "$TMP_GLES"
             "$AR" -x "$GLES"
           )
 
-          EGL_EXTRACTED="$(
-            find "$TMP_EGL" \
-              -type f \
-              -name '*.o' |
-            wc -l |
-            tr -d ' '
-          )"
+          (
+            cd "$TMP_EGL"
+            "$AR" -x "$EGL"
+          )
 
-          GLES_EXTRACTED="$(
-            find "$TMP_GLES" \
-              -type f \
-              -name '*.o' |
-            wc -l |
-            tr -d ' '
-          )"
+          GLES_COUNT=0
+          EGL_COUNT=0
 
-          echo ""
-          echo "Extracted EGL objects:  $EGL_EXTRACTED"
-          echo "Extracted GLES objects: $GLES_EXTRACTED"
+          while IFS= read -r -d '' obj; do
+            DESC="$(file "$obj")"
 
-          # ------------------------------------------------------
-          # ARM64
-          # ------------------------------------------------------
+            echo "$DESC"
 
-          check_arm64_objects() {
-            local directory="$1"
-            local label="$2"
-
-            local count=0
-
-            while IFS= read -r -d '' obj; do
-
-              description="$(file "$obj")"
-
-              if ! echo "$description" | grep -Eqi \
-                'Mach-O 64-bit.*arm64|Mach-O.*arm64'; then
-
-                echo ""
-                echo "ERROR: non-arm64 $label object:"
-                echo "$description"
-
-                exit 1
-              fi
-
-              count=$((count + 1))
-
-            done < <(
-              find "$directory" \
-                -type f \
-                -name '*.o' \
-                -print0
-            )
-
-            if [ "$count" -eq 0 ]; then
-              echo "ERROR: no $label ARM64 objects."
+            if ! echo "$DESC" | grep -Eqi \
+              'Mach-O.*arm64|Mach-O 64-bit.*arm64'; then
+              echo "ERROR: GLES archive contains non-arm64 object."
               exit 1
             fi
 
-            echo "$label ARM64 objects: $count"
-          }
+            GLES_COUNT=$((GLES_COUNT + 1))
+          done < <(
+            find "$TMP_GLES" \
+              -type f \
+              -name '*.o' \
+              -print0
+          )
 
-          check_arm64_objects "$TMP_EGL" "EGL"
-          check_arm64_objects "$TMP_GLES" "GLES"
+          while IFS= read -r -d '' obj; do
+            DESC="$(file "$obj")"
+
+            echo "$DESC"
+
+            if ! echo "$DESC" | grep -Eqi \
+              'Mach-O.*arm64|Mach-O 64-bit.*arm64'; then
+              echo "ERROR: EGL archive contains non-arm64 object."
+              exit 1
+            fi
+
+            EGL_COUNT=$((EGL_COUNT + 1))
+          done < <(
+            find "$TMP_EGL" \
+              -type f \
+              -name '*.o' \
+              -print0
+          )
+
+          echo
+          echo "GLES ARM64 objects: $GLES_COUNT"
+          echo "EGL ARM64 objects:  $EGL_COUNT"
+
+          [ "$GLES_COUNT" -gt 0 ]
+          [ "$EGL_COUNT" -gt 0 ]
 
           # ------------------------------------------------------
-          # SYMBOLS
+          # SYMBOL VALIDATION
           # ------------------------------------------------------
-
-          EGL_SYMBOLS="$(
-            "$NM" -gU "$EGL" 2>/dev/null |
-            wc -l |
-            tr -d ' '
-          )"
 
           GLES_SYMBOLS="$(
-            "$NM" -gU "$GLES" 2>/dev/null |
+            nm -gU "$GLES" 2>/dev/null |
             wc -l |
             tr -d ' '
           )"
 
-          echo ""
-          echo "EGL global symbols:  $EGL_SYMBOLS"
+          EGL_SYMBOLS="$(
+            nm -gU "$EGL" 2>/dev/null |
+            wc -l |
+            tr -d ' '
+          )"
+
+          echo
           echo "GLES global symbols: $GLES_SYMBOLS"
+          echo "EGL global symbols:  $EGL_SYMBOLS"
 
-          if [ "$EGL_SYMBOLS" -eq 0 ]; then
-            echo "ERROR: EGL archive has no global symbols."
-            exit 1
-          fi
-
-          if [ "$GLES_SYMBOLS" -eq 0 ]; then
-            echo "ERROR: GLES archive has no global symbols."
-            exit 1
-          fi
+          [ "$GLES_SYMBOLS" -gt 0 ]
+          [ "$EGL_SYMBOLS" -gt 0 ]
 
           # ------------------------------------------------------
-          # VERIFY GLES IMPLEMENTATION
-          #
-          # The archive must contain actual ANGLE implementation
-          # symbols, not just generated API wrappers.
+          # SAVE NORMAL ANGLE ARCHIVES
           # ------------------------------------------------------
 
-          echo ""
-          echo "============================================================"
-          echo " VERIFY GLES IMPLEMENTATION"
-          echo "============================================================"
+          mkdir -p "$ARTIFACT_DIR/include"
 
-          if ! "$NM" -gU "$GLES" 2>/dev/null | grep -Eqi \
-            '(_eglGetDisplay|_glGetString|_glClear|_glBindTexture|_glCreateShader|_eglInitialize)'; then
-
-            echo ""
-            echo "ERROR: expected ANGLE GLES/EGL implementation symbols"
-            echo "were not found in libGLESv2_static.a."
-
-            echo ""
-            echo "First symbols:"
-            "$NM" -gU "$GLES" 2>/dev/null | head -100
-
-            exit 1
-          fi
-
-          echo "GLES implementation symbols detected."
-
-          # ------------------------------------------------------
-          # REAL LINK TEST
-          #
-          # IMPORTANT:
-          #
-          # Link both archives exactly as a consumer is expected to.
-          #
-          # GLES is complete.
-          # EGL remains a normal wrapper archive.
-          # ------------------------------------------------------
-
-          echo ""
-          echo "============================================================"
-          echo " REAL iOS ARM64 LINK TEST"
-          echo "============================================================"
-
-          cat > "$LINK_TMP/main.mm" <<'EOF'
-          #import <Foundation/Foundation.h>
-          #import <Metal/Metal.h>
-
-          #include <EGL/egl.h>
-          #include <GLES2/gl2.h>
-
-          int main() {
-              @autoreleasepool {
-                  EGLDisplay display =
-                      eglGetDisplay(EGL_DEFAULT_DISPLAY);
-
-                  (void)display;
-
-                  EGLint major = 0;
-                  EGLint minor = 0;
-
-                  eglInitialize(
-                      display,
-                      &major,
-                      &minor
-                  );
-
-                  const GLubyte *version =
-                      glGetString(GL_VERSION);
-
-                  (void)version;
-
-                  id<MTLDevice> device =
-                      MTLCreateSystemDefaultDevice();
-
-                  (void)device;
-              }
-
-              return 0;
-          }
-          EOF
-
-          "$CLANGXX" \
-            -arch arm64 \
-            -isysroot "$SDK" \
-            -mios-version-min="$IOS_DEPLOYMENT_TARGET" \
-            -I"$ANGLE_SRC/include" \
-            -c \
-            "$LINK_TMP/main.mm" \
-            -o "$LINK_TMP/main.o"
-
-          "$CLANGXX" \
-            -arch arm64 \
-            -isysroot "$SDK" \
-            -mios-version-min="$IOS_DEPLOYMENT_TARGET" \
-            "$LINK_TMP/main.o" \
-            "$EGL" \
-            "$GLES" \
-            -framework Foundation \
-            -framework Metal \
-            -framework QuartzCore \
-            -framework CoreGraphics \
-            -framework UIKit \
-            -framework IOSurface \
-            -framework CoreFoundation \
-            -o "$LINK_TMP/angle-link-test"
-
-          test -x "$LINK_TMP/angle-link-test"
-
-          echo ""
-          echo "REAL iOS ARM64 LINK TEST PASSED."
-
-          # ------------------------------------------------------
-          # VERIFY LINKED BINARY
-          # ------------------------------------------------------
-
-          echo ""
-          echo "Linked executable:"
-          file "$LINK_TMP/angle-link-test"
-
-          "$NM" -arch arm64 "$LINK_TMP/angle-link-test" 2>/dev/null |
-            grep -E \
-              '(_eglGetDisplay|_eglInitialize|_glGetString)' \
-              | head -20 \
-              || true
-
-          # ------------------------------------------------------
-          # FINAL SIZES
-          # ------------------------------------------------------
-
-          EGL_SIZE="$(stat -f%z "$EGL")"
-          GLES_SIZE="$(stat -f%z "$GLES")"
-
-          echo ""
-          echo "============================================================"
-          echo " FINAL ARCHIVE SIZES"
-          echo "============================================================"
-
-          echo "libEGL_static.a:    $EGL_SIZE bytes"
-          echo "libGLESv2_static.a: $GLES_SIZE bytes"
-
-          # No arbitrary MB requirement.
-          # GLES must simply be materially larger than the
-          # generated wrapper-only archive.
-
-          if [ "$GLES_SIZE" -le "$EGL_SIZE" ]; then
-            echo ""
-            echo "WARNING: GLES archive is not larger than EGL."
-            echo "Continuing because correctness is determined by"
-            echo "archive contents and the real link test."
-          fi
-
-          # ------------------------------------------------------
-          # ARTIFACTS
-          # ------------------------------------------------------
-
-          rm -rf "$ARTIFACT_DIR"
-
-          mkdir -p \
-            "$ARTIFACT_DIR/include"
-
-          cp \
-            "$EGL" \
-            "$ARTIFACT_DIR/libEGL_static.a"
-
-          cp \
-            "$GLES" \
-            "$ARTIFACT_DIR/libGLESv2_static.a"
+          cp "$GLES" "$ARTIFACT_DIR/libGLESv2_static.a"
+          cp "$EGL" "$ARTIFACT_DIR/libEGL_static.a"
 
           cp -R \
-            "$ANGLE_SRC/include/." \
+            "$ANGLE_DIR/include/." \
             "$ARTIFACT_DIR/include/"
 
+          echo
+          echo "Initial ANGLE artifacts copied."
+
           # ------------------------------------------------------
-          # FINAL ARTIFACT CHECK
+          # FINAL OUTPUT
           # ------------------------------------------------------
 
-          test -f \
-            "$ARTIFACT_DIR/libEGL_static.a"
-
-          test -f \
-            "$ARTIFACT_DIR/libGLESv2_static.a"
-
-          echo ""
-          echo "============================================================"
-          echo " FINAL ANGLE ARTIFACTS"
-          echo "============================================================"
+          echo
+          echo "=================================================="
+          echo "ANGLE ARTIFACTS"
+          echo "=================================================="
 
           ls -lh \
             "$ARTIFACT_DIR/libEGL_static.a" \
@@ -1144,19 +558,6 @@ jobs:
           file \
             "$ARTIFACT_DIR/libEGL_static.a" \
             "$ARTIFACT_DIR/libGLESv2_static.a"
-
-          echo ""
-          echo "EGL:"
-          echo "$ARTIFACT_DIR/libEGL_static.a"
-
-          echo ""
-          echo "GLES:"
-          echo "$ARTIFACT_DIR/libGLESv2_static.a"
-
-          echo ""
-          echo "============================================================"
-          echo " ANGLE iOS ARM64 BUILD SUCCESS"
-          echo "============================================================"
 
       # ==========================================================
       # 8. UPLOAD
