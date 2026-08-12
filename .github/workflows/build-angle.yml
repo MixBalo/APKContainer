@@ -13,7 +13,7 @@ jobs:
 
     steps:
       # ==============================================================
-      # Checkout this repository
+      # Checkout
       # ==============================================================
 
       - name: Checkout Repository
@@ -28,6 +28,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           echo "week=$(date +%Y-%U)" >> "$GITHUB_OUTPUT"
 
       # ==============================================================
@@ -68,9 +69,9 @@ jobs:
         uses: actions/cache@v5
         with:
           path: angle-work
-          key: angle-source-v5-${{ runner.os }}-${{ steps.week.outputs.week }}-${{ hashFiles('.github/workflows/build-angle.yml') }}
+          key: angle-source-v7-${{ runner.os }}-${{ steps.week.outputs.week }}-${{ hashFiles('.github/workflows/build-angle.yml') }}
           restore-keys: |
-            angle-source-v5-${{ runner.os }}-
+            angle-source-v7-${{ runner.os }}-
 
       # ==============================================================
       # Fetch ANGLE
@@ -104,7 +105,7 @@ jobs:
           cd "$GITHUB_WORKSPACE/angle-work"
 
           if [ ! -f ".gclient" ]; then
-            echo "ERROR: .gclient was not found."
+            echo "ERROR: .gclient not found."
             exit 1
           fi
 
@@ -130,29 +131,30 @@ jobs:
           echo "$ANGLE_SRC"
 
           if [ ! -f "$ANGLE_SRC/.gclient" ]; then
-            echo "ERROR: Missing .gclient:"
+            echo "ERROR: Missing:"
             echo "$ANGLE_SRC/.gclient"
             exit 1
           fi
 
           if [ ! -f "$ANGLE_SRC/BUILD.gn" ]; then
-            echo "ERROR: Missing BUILD.gn:"
+            echo "ERROR: Missing:"
             echo "$ANGLE_SRC/BUILD.gn"
             exit 1
           fi
 
+          if [ ! -f "$ANGLE_SRC/gni/angle.gni" ]; then
+            echo "ERROR: Missing:"
+            echo "$ANGLE_SRC/gni/angle.gni"
+            exit 1
+          fi
+
           if ! grep -q 'libEGL_static' "$ANGLE_SRC/BUILD.gn"; then
-            echo "ERROR: libEGL_static was not found in BUILD.gn."
+            echo "ERROR: libEGL_static not found."
             exit 1
           fi
 
           if ! grep -q 'libGLESv2_static' "$ANGLE_SRC/BUILD.gn"; then
-            echo "ERROR: libGLESv2_static was not found in BUILD.gn."
-            exit 1
-          fi
-
-          if [ ! -f "$ANGLE_SRC/gni/angle.gni" ]; then
-            echo "ERROR: Missing gni/angle.gni."
+            echo "ERROR: libGLESv2_static not found."
             exit 1
           fi
 
@@ -160,7 +162,7 @@ jobs:
           echo "angle_src=$ANGLE_SRC" >> "$GITHUB_OUTPUT"
 
       # ==============================================================
-      # Show ANGLE revision
+      # Verify ANGLE source
       # ==============================================================
 
       - name: Verify ANGLE Source
@@ -198,29 +200,37 @@ jobs:
           grep -n -E \
             'angle_static_library\("lib(EGL|GLESv2)_static"\)|lib(EGL|GLESv2)_static' \
             BUILD.gn \
-            | head -40 || true
+            | head -50 || true
 
       # ==============================================================
-      # Patch ANGLE's static-library template
+      # Patch ANGLE static-library template
       #
-      # Current ANGLE's angle_static_library template forwards the
-      # invoker variables into static_library(). It does NOT globally
-      # set complete_static_lib.
+      # IMPORTANT:
       #
-      # Chromium's thin_archive documentation explicitly requires:
+      # ANGLE's template does:
       #
-      #   1. complete_static_lib = true
-      #   2. remove //build/config/compiler:thin_archive
+      #   static_library(target_name) {
+      #     forward_variables_from(...)
+      #     configs += invoker.configs
+      #     configs -= invoker.suppressed_configs
+      #   }
       #
-      # We do both directly in the template.
+      # Therefore thin_archive MUST be removed AFTER configs are added.
+      #
+      # Chromium requires both:
+      #
+      #   complete_static_lib = true
+      #   configs -= [ "//build/config/compiler:thin_archive" ]
+      #
+      # for a distributable static archive.
+      #
+      # This patch is idempotent.
       # ==============================================================
 
       - name: Configure Complete Static Libraries
         shell: bash
         run: |
           set -euo pipefail
-
-          cd "$ANGLE_SRC"
 
           GNI="$ANGLE_SRC/gni/angle.gni"
 
@@ -235,63 +245,152 @@ jobs:
           path = Path(sys.argv[1])
           text = path.read_text()
 
-          marker = 'template("angle_static_library") {\n  static_library(target_name) {\n'
+          template_start = text.find('template("angle_static_library")')
 
-          if marker not in text:
-              print("ERROR: Could not find the current angle_static_library template.")
-              print("")
-              print("Expected marker:")
-              print(marker)
-              print("")
-              print("Nearby occurrences of angle_static_library:")
-              for i, line in enumerate(text.splitlines(), 1):
-                  if "angle_static_library" in line:
-                      print(f"{i}: {line}")
-              sys.exit(1)
-
-          if text.count(marker) != 1:
-              print(
-                  "ERROR: Expected exactly one angle_static_library template, "
-                  f"found {text.count(marker)}."
+          if template_start == -1:
+              raise SystemExit(
+                  "ERROR: angle_static_library template was not found."
               )
-              sys.exit(1)
 
-          insertion = (
-              'template("angle_static_library") {\n'
-              '  static_library(target_name) {\n'
-              '    complete_static_lib = true\n'
-              '    configs -= [ "//build/config/compiler:thin_archive" ]\n'
+          # Find the next template declaration after angle_static_library.
+          next_template = text.find(
+              '\ntemplate("',
+              template_start + 1,
           )
 
-          text = text.replace(marker, insertion, 1)
+          if next_template == -1:
+              next_template = len(text)
 
-          path.write_text(text)
+          block = text[template_start:next_template]
+
+          static_marker = 'static_library(target_name) {'
+
+          static_start = block.find(static_marker)
+
+          if static_start == -1:
+              raise SystemExit(
+                  "ERROR: static_library(target_name) was not found "
+                  "inside angle_static_library."
+              )
+
+          # Find the end of the static_library block by looking for the
+          # closing sequence that precedes the end of this template.
+          #
+          # We don't need a full GN parser: the current ANGLE template has
+          # a single static_library(target_name) block.
+          static_block_start = static_start + len(static_marker)
+
+          # Work on the body after static_library(target_name) {
+          body = block[static_block_start:]
+
+          complete_line = '  complete_static_lib = true\n'
+          thin_line = (
+              '  configs -= [ "//build/config/compiler:thin_archive" ]\n'
+          )
+
+          # ------------------------------------------------------------
+          # complete_static_lib
+          # ------------------------------------------------------------
+
+          if 'complete_static_lib = true' not in body:
+              # Put this immediately inside static_library().
+              insert_at = static_block_start
+
+              block = (
+                  block[:insert_at]
+                  + '\n'
+                  + complete_line
+                  + block[insert_at:]
+              )
+
+          # Recalculate after possible insertion.
+          static_start = block.find(static_marker)
+
+          if static_start == -1:
+              raise SystemExit(
+                  "ERROR: static_library(target_name) disappeared "
+                  "during patching."
+              )
+
+          static_body_start = static_start + len(static_marker)
+
+          # ------------------------------------------------------------
+          # thin_archive removal
+          #
+          # Put it AFTER configs += invoker.configs and
+          # configs -= invoker.suppressed_configs.
+          # ------------------------------------------------------------
+
+          configs_add = 'configs += invoker.configs'
+          configs_remove = 'configs -= invoker.suppressed_configs'
+
+          add_pos = block.find(
+              configs_add,
+              static_body_start,
+          )
+
+          remove_pos = block.find(
+              configs_remove,
+              static_body_start,
+          )
+
+          if add_pos == -1:
+              raise SystemExit(
+                  "ERROR: configs += invoker.configs was not found."
+              )
+
+          if remove_pos == -1:
+              raise SystemExit(
+                  "ERROR: configs -= invoker.suppressed_configs "
+                  "was not found."
+              )
+
+          if remove_pos < add_pos:
+              raise SystemExit(
+                  "ERROR: Unexpected ANGLE template ordering: "
+                  "suppressed configs appear before invoker configs."
+              )
+
+          if (
+              'configs -= [ "//build/config/compiler:thin_archive" ]'
+              not in block
+          ):
+              line_end = block.find('\n', remove_pos)
+
+              if line_end == -1:
+                  raise SystemExit(
+                      "ERROR: Could not determine configs line boundary."
+                  )
+
+              insertion_point = line_end + 1
+
+              block = (
+                  block[:insertion_point]
+                  + thin_line
+                  + block[insertion_point:]
+              )
+
+          # Replace the original template block.
+          new_text = (
+              text[:template_start]
+              + block
+              + text[next_template:]
+          )
+
+          path.write_text(new_text)
+
+          print("Patch completed successfully.")
           PY
 
           echo ""
-          echo "Patched template:"
-          echo "--------------------------------------------------"
+          echo "=================================================="
+          echo "PATCHED TEMPLATE"
+          echo "=================================================="
 
           sed -n \
-            '/template("angle_static_library") {/,/^  }/p' \
+            '/template("angle_static_library")/,/^}/p' \
             "$GNI" \
-            | head -80
-
-          echo "--------------------------------------------------"
-
-          if ! grep -q \
-            'complete_static_lib = true' \
-            "$GNI"; then
-            echo "ERROR: complete_static_lib was not inserted."
-            exit 1
-          fi
-
-          if ! grep -q \
-            '//build/config/compiler:thin_archive' \
-            "$GNI"; then
-            echo "ERROR: thin_archive reference was not inserted."
-            exit 1
-          fi
+            | head -100
 
       # ==============================================================
       # Verify patch
@@ -305,14 +404,8 @@ jobs:
           GNI="$ANGLE_SRC/gni/angle.gni"
 
           echo "=================================================="
-          echo "VERIFYING PATCH"
+          echo "VERIFY STATIC LIBRARY PATCH"
           echo "=================================================="
-
-          grep -n -A35 -B3 \
-            'template("angle_static_library")' \
-            "$GNI"
-
-          echo ""
 
           if ! grep -q \
             'complete_static_lib = true' \
@@ -328,6 +421,50 @@ jobs:
             exit 1
           fi
 
+          COMPLETE_LINE=$(
+            grep -n \
+              'complete_static_lib = true' \
+              "$GNI" \
+              | head -1 \
+              | cut -d: -f1
+          )
+
+          THIN_LINE=$(
+            grep -n \
+              'configs -= \[ "//build/config/compiler:thin_archive" \]' \
+              "$GNI" \
+              | head -1 \
+              | cut -d: -f1
+          )
+
+          CONFIG_ADD_LINE=$(
+            grep -n \
+              'configs += invoker.configs' \
+              "$GNI" \
+              | head -1 \
+              | cut -d: -f1
+          )
+
+          CONFIG_REMOVE_LINE=$(
+            grep -n \
+              'configs -= invoker.suppressed_configs' \
+              "$GNI" \
+              | head -1 \
+              | cut -d: -f1
+          )
+
+          echo "complete_static_lib line: $COMPLETE_LINE"
+          echo "configs += invoker.configs line: $CONFIG_ADD_LINE"
+          echo "configs -= invoker.suppressed_configs line: $CONFIG_REMOVE_LINE"
+          echo "thin_archive removal line: $THIN_LINE"
+
+          if [ "$THIN_LINE" -le "$CONFIG_REMOVE_LINE" ]; then
+            echo "ERROR: thin_archive removal occurs before suppressed-config removal."
+            echo "The removal must happen AFTER ANGLE adds its configs."
+            exit 1
+          fi
+
+          echo ""
           echo "Static library patch verified."
 
       # ==============================================================
@@ -357,12 +494,10 @@ jobs:
             angle_enable_metal=true
             angle_enable_vulkan=false
             angle_enable_gl=false
-
-            symbol_level=1
           '
 
       # ==============================================================
-      # Inspect GN arguments
+      # Verify GN configuration
       # ==============================================================
 
       - name: Verify GN Configuration
@@ -373,12 +508,12 @@ jobs:
           cd "$ANGLE_SRC"
 
           echo "=================================================="
-          echo "GN ARGS"
+          echo "GN CONFIGURATION"
           echo "=================================================="
 
-          gn args --list out/ios \
+          gn args out/ios --list \
             | grep -E \
-              '^(target_os|target_cpu|target_environment|is_debug|is_component_build|is_official_build|ios_enable_code_signing|angle_enable_metal|angle_enable_vulkan|angle_enable_gl|symbol_level)' \
+              '^(target_os|target_cpu|target_environment|is_debug|is_component_build|is_official_build|ios_enable_code_signing|angle_enable_metal|angle_enable_vulkan|angle_enable_gl)' \
             || true
 
           echo ""
@@ -386,11 +521,20 @@ jobs:
           echo "GN CHECK"
           echo "=================================================="
 
-          gn check out/ios //:libEGL_static
           gn check out/ios //:libGLESv2_static
+          gn check out/ios //:libEGL_static
+
+          echo ""
+          echo "GN check passed."
 
       # ==============================================================
-      # Inspect static targets
+      # Inspect targets
+      #
+      # DO NOT use:
+      #
+      #   gn desc out/ios //:libGLESv2_static complete_static_lib
+      #
+      # complete_static_lib is not a valid gn desc item.
       # ==============================================================
 
       - name: Inspect GN Static Targets
@@ -415,23 +559,20 @@ jobs:
 
           echo ""
           echo "=================================================="
-          echo "libGLESv2_static COMPLETE ARCHIVE"
+          echo "GENERATED TARGET FILES"
           echo "=================================================="
 
-          gn desc out/ios //:libGLESv2_static complete_static_lib
-
-          echo ""
-          echo "=================================================="
-          echo "libEGL_static COMPLETE ARCHIVE"
-          echo "=================================================="
-
-          gn desc out/ios //:libEGL_static complete_static_lib
+          ninja -C out/ios -t targets all \
+            | grep -E \
+              'lib(EGL|GLESv2)_static\.a' \
+            | head -50 \
+            || true
 
       # ==============================================================
-      # Build
+      # Build GLES first
       # ==============================================================
 
-      - name: Compile ANGLE
+      - name: Build libGLESv2_static
         shell: bash
         run: |
           set -euo pipefail
@@ -447,7 +588,17 @@ jobs:
             -j2 \
             libGLESv2_static
 
-          echo ""
+      # ==============================================================
+      # Build EGL
+      # ==============================================================
+
+      - name: Build libEGL_static
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$ANGLE_SRC"
+
           echo "=================================================="
           echo "BUILD libEGL_static"
           echo "=================================================="
@@ -458,7 +609,7 @@ jobs:
             libEGL_static
 
       # ==============================================================
-      # Locate generated archives
+      # Locate archives
       # ==============================================================
 
       - name: Locate Generated Libraries
@@ -467,7 +618,7 @@ jobs:
           set -euo pipefail
 
           echo "=================================================="
-          echo "ALL GENERATED ARCHIVES"
+          echo "GENERATED ARCHIVES"
           echo "=================================================="
 
           find "$ANGLE_SRC/out/ios" \
@@ -481,7 +632,7 @@ jobs:
             | sort
 
       # ==============================================================
-      # Verify expected paths
+      # Verify exact archive paths
       # ==============================================================
 
       - name: Verify Archive Paths
@@ -493,27 +644,32 @@ jobs:
           GLES="$ANGLE_SRC/out/ios/obj/libGLESv2_static.a"
 
           echo "=================================================="
-          echo "EXPECTED ARCHIVES"
+          echo "VERIFY ARCHIVE PATHS"
           echo "=================================================="
 
           if [ ! -f "$EGL" ]; then
-            echo "ERROR: Missing:"
+            echo "ERROR: libEGL_static.a was not generated."
+            echo "Expected:"
             echo "$EGL"
             exit 1
           fi
 
           if [ ! -f "$GLES" ]; then
-            echo "ERROR: Missing:"
+            echo "ERROR: libGLESv2_static.a was not generated."
+            echo "Expected:"
             echo "$GLES"
             exit 1
           fi
 
-          echo "Found:"
+          echo "EGL:"
           echo "$EGL"
+
+          echo ""
+          echo "GLES:"
           echo "$GLES"
 
       # ==============================================================
-      # Validate archive format
+      # Validate archive format and size
       # ==============================================================
 
       - name: Verify Static Libraries
@@ -528,54 +684,76 @@ jobs:
           echo "FILE TYPES"
           echo "=================================================="
 
-          file "$EGL"
-          file "$GLES"
+          EGL_FILE="$(file "$EGL")"
+          GLES_FILE="$(file "$GLES")"
+
+          echo "$EGL_FILE"
+          echo "$GLES_FILE"
 
           echo ""
           echo "=================================================="
           echo "REJECT THIN ARCHIVES"
           echo "=================================================="
 
-          if file "$EGL" | grep -qi 'thin archive'; then
+          if echo "$EGL_FILE" | grep -qi 'thin archive'; then
+            echo ""
             echo "ERROR: libEGL_static.a is STILL a thin archive."
+            echo ""
+            echo "The ANGLE template patch did not produce a normal archive."
             exit 1
           fi
 
-          if file "$GLES" | grep -qi 'thin archive'; then
+          if echo "$GLES_FILE" | grep -qi 'thin archive'; then
+            echo ""
             echo "ERROR: libGLESv2_static.a is STILL a thin archive."
+            echo ""
+            echo "The ANGLE template patch did not produce a normal archive."
             exit 1
           fi
 
-          echo "Both archives are regular archives."
+          echo "Both archives are non-thin."
 
           echo ""
           echo "=================================================="
           echo "SIZES"
           echo "=================================================="
 
-          ls -lh "$EGL"
-          ls -lh "$GLES"
-
           EGL_SIZE=$(stat -f%z "$EGL")
           GLES_SIZE=$(stat -f%z "$GLES")
+
+          ls -lh "$EGL"
+          ls -lh "$GLES"
 
           echo ""
           echo "libEGL_static.a: ${EGL_SIZE} bytes"
           echo "libGLESv2_static.a: ${GLES_SIZE} bytes"
 
           if [ "$EGL_SIZE" -lt 1000000 ]; then
+            echo ""
             echo "ERROR: libEGL_static.a is suspiciously small."
             exit 1
           fi
 
           if [ "$GLES_SIZE" -lt 1000000 ]; then
+            echo ""
             echo "ERROR: libGLESv2_static.a is suspiciously small."
             exit 1
           fi
 
-          echo ""
+      # ==============================================================
+      # Archive member verification
+      # ==============================================================
+
+      - name: Verify Archive Members
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          EGL="$ANGLE_SRC/out/ios/obj/libEGL_static.a"
+          GLES="$ANGLE_SRC/out/ios/obj/libGLESv2_static.a"
+
           echo "=================================================="
-          echo "ARCHIVE MEMBERS"
+          echo "ARCHIVE MEMBER COUNTS"
           echo "=================================================="
 
           EGL_COUNT=$(
@@ -594,12 +772,12 @@ jobs:
           echo "libGLESv2_static.a members: $GLES_COUNT"
 
           if [ "$EGL_COUNT" -lt 10 ]; then
-            echo "ERROR: libEGL_static.a contains too few objects."
+            echo "ERROR: libEGL_static.a contains too few members."
             exit 1
           fi
 
           if [ "$GLES_COUNT" -lt 10 ]; then
-            echo "ERROR: libGLESv2_static.a contains too few objects."
+            echo "ERROR: libGLESv2_static.a contains too few members."
             exit 1
           fi
 
@@ -612,7 +790,7 @@ jobs:
           /usr/bin/ar -t "$GLES" | head -20
 
       # ==============================================================
-      # Verify actual ARM64 Mach-O object files
+      # Extract archives and verify actual object files
       # ==============================================================
 
       - name: Verify ARM64 Objects
@@ -623,8 +801,8 @@ jobs:
           EGL="$ANGLE_SRC/out/ios/obj/libEGL_static.a"
           GLES="$ANGLE_SRC/out/ios/obj/libGLESv2_static.a"
 
-          TMP_EGL=$(mktemp -d)
-          TMP_GLES=$(mktemp -d)
+          TMP_EGL="$(mktemp -d)"
+          TMP_GLES="$(mktemp -d)"
 
           cleanup() {
             rm -rf "$TMP_EGL" "$TMP_GLES"
@@ -633,7 +811,7 @@ jobs:
           trap cleanup EXIT
 
           echo "=================================================="
-          echo "EXTRACTING EGL OBJECTS"
+          echo "EXTRACT EGL"
           echo "=================================================="
 
           (
@@ -642,7 +820,7 @@ jobs:
           )
 
           echo "=================================================="
-          echo "EXTRACTING GLES OBJECTS"
+          echo "EXTRACT GLES"
           echo "=================================================="
 
           (
@@ -650,26 +828,39 @@ jobs:
             /usr/bin/ar -x "$GLES"
           )
 
-          EGL_OBJECTS=$(find "$TMP_EGL" -type f -name "*.o" | wc -l | tr -d ' ')
-          GLES_OBJECTS=$(find "$TMP_GLES" -type f -name "*.o" | wc -l | tr -d ' ')
+          EGL_OBJECTS=$(
+            find "$TMP_EGL" \
+              -type f \
+              -name "*.o" |
+            wc -l |
+            tr -d ' '
+          )
+
+          GLES_OBJECTS=$(
+            find "$TMP_GLES" \
+              -type f \
+              -name "*.o" |
+            wc -l |
+            tr -d ' '
+          )
 
           echo ""
-          echo "EGL extracted object files: $EGL_OBJECTS"
-          echo "GLES extracted object files: $GLES_OBJECTS"
+          echo "EGL object files: $EGL_OBJECTS"
+          echo "GLES object files: $GLES_OBJECTS"
 
           if [ "$EGL_OBJECTS" -lt 10 ]; then
-            echo "ERROR: Too few extracted EGL objects."
+            echo "ERROR: Too few EGL object files."
             exit 1
           fi
 
           if [ "$GLES_OBJECTS" -lt 10 ]; then
-            echo "ERROR: Too few extracted GLES objects."
+            echo "ERROR: Too few GLES object files."
             exit 1
           fi
 
           echo ""
           echo "=================================================="
-          echo "CHECKING MACH-O ARM64"
+          echo "VERIFY ARM64 MACH-O OBJECTS"
           echo "=================================================="
 
           EGL_ARM64=0
@@ -679,9 +870,6 @@ jobs:
             if file "$obj" | grep -Eqi \
               'Mach-O.*arm64|Mach-O 64-bit.*arm64'; then
               EGL_ARM64=$((EGL_ARM64 + 1))
-            else
-              echo "WARNING: Non-ARM64 EGL object:"
-              file "$obj"
             fi
           done < <(
             find "$TMP_EGL" \
@@ -694,9 +882,6 @@ jobs:
             if file "$obj" | grep -Eqi \
               'Mach-O.*arm64|Mach-O 64-bit.*arm64'; then
               GLES_ARM64=$((GLES_ARM64 + 1))
-            else
-              echo "WARNING: Non-ARM64 GLES object:"
-              file "$obj"
             fi
           done < <(
             find "$TMP_GLES" \
@@ -705,7 +890,6 @@ jobs:
               -print0
           )
 
-          echo ""
           echo "ARM64 EGL objects: $EGL_ARM64"
           echo "ARM64 GLES objects: $GLES_ARM64"
 
@@ -732,31 +916,17 @@ jobs:
           GLES="$ANGLE_SRC/out/ios/obj/libGLESv2_static.a"
 
           echo "=================================================="
-          echo "EGL SYMBOLS"
-          echo "=================================================="
-
-          nm -gU "$EGL" | head -30 || true
-
-          echo ""
-          echo "=================================================="
-          echo "GLES SYMBOLS"
-          echo "=================================================="
-
-          nm -gU "$GLES" | head -30 || true
-
-          echo ""
-          echo "=================================================="
           echo "SYMBOL COUNTS"
           echo "=================================================="
 
           EGL_SYMBOLS=$(
-            nm -gU "$EGL" |
+            nm -gU "$EGL" 2>/dev/null |
             wc -l |
             tr -d ' '
           )
 
           GLES_SYMBOLS=$(
-            nm -gU "$GLES" |
+            nm -gU "$GLES" 2>/dev/null |
             wc -l |
             tr -d ' '
           )
@@ -765,14 +935,22 @@ jobs:
           echo "GLES global symbols: $GLES_SYMBOLS"
 
           if [ "$EGL_SYMBOLS" -lt 10 ]; then
-            echo "ERROR: libEGL_static.a has too few symbols."
+            echo "ERROR: libEGL_static.a has too few global symbols."
             exit 1
           fi
 
           if [ "$GLES_SYMBOLS" -lt 10 ]; then
-            echo "ERROR: libGLESv2_static.a has too few symbols."
+            echo "ERROR: libGLESv2_static.a has too few global symbols."
             exit 1
           fi
+
+          echo ""
+          echo "First EGL symbols:"
+          nm -gU "$EGL" 2>/dev/null | head -30 || true
+
+          echo ""
+          echo "First GLES symbols:"
+          nm -gU "$GLES" 2>/dev/null | head -30 || true
 
       # ==============================================================
       # Final summary
@@ -786,8 +964,9 @@ jobs:
           EGL="$ANGLE_SRC/out/ios/obj/libEGL_static.a"
           GLES="$ANGLE_SRC/out/ios/obj/libGLESv2_static.a"
 
+          echo ""
           echo "=================================================="
-          echo "FINAL ANGLE iOS ARM64 LIBRARIES"
+          echo "FINAL ANGLE iOS ARM64 STATIC LIBRARIES"
           echo "=================================================="
 
           echo ""
@@ -823,13 +1002,16 @@ jobs:
 
           cp \
             "$ANGLE_SRC/out/ios/obj/libEGL_static.a" \
-            "$ARTIFACT_DIR/"
+            "$ARTIFACT_DIR/libEGL_static.a"
 
           cp \
             "$ANGLE_SRC/out/ios/obj/libGLESv2_static.a" \
-            "$ARTIFACT_DIR/"
+            "$ARTIFACT_DIR/libGLESv2_static.a"
 
-          echo "Artifacts:"
+          echo "=================================================="
+          echo "ARTIFACTS"
+          echo "=================================================="
+
           ls -lh "$ARTIFACT_DIR"
 
       # ==============================================================
