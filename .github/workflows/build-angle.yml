@@ -671,15 +671,15 @@ jobs:
       # ==============================================================
       # Validate final archives
       #
-      # DO NOT use an arbitrary 1 MB minimum.
+      # The validation intentionally uses Apple's system tools:
       #
-      # A valid ANGLE archive may legitimately be smaller than 1 MB.
-      # The important properties are:
+      #   /usr/bin/ar
+      #   file
+      #   nm
+      #   stat
       #
-      #   1. It is NOT a thin archive.
-      #   2. It contains real object members.
-      #   3. The members are Mach-O ARM64 objects.
-      #   4. The archive contains symbols.
+      # Do NOT require llvm-ar. macos-latest does not guarantee that
+      # llvm-ar is installed or available in PATH.
       #
       # ==============================================================
 
@@ -733,8 +733,12 @@ jobs:
           echo "libEGL_static.a: ${EGL_SIZE} bytes"
           echo "libGLESv2_static.a: ${GLES_SIZE} bytes"
 
-          # Only reject an actually empty/tiny archive.
-          # Do NOT impose an arbitrary 1 MB requirement.
+          # The size is informational.
+          #
+          # Do not impose an arbitrary 1 MB requirement.
+          # ANGLE's current generated static libraries can legitimately
+          # be much smaller.
+
           if [ "$EGL_SIZE" -lt 4096 ]; then
             echo "ERROR: libEGL_static.a is unexpectedly tiny."
             exit 1
@@ -749,41 +753,43 @@ jobs:
 
           echo ""
           echo "=================================================="
-          echo "ARCHIVE MEMBER COUNTS"
+          echo "ARCHIVE MEMBERS"
           echo "=================================================="
 
+          EGL_MEMBERS="$(/usr/bin/ar -t "$EGL")"
+          GLES_MEMBERS="$(/usr/bin/ar -t "$GLES")"
+
+          echo ""
+          echo "libEGL_static.a:"
+          printf '%s\n' "$EGL_MEMBERS"
+
+          echo ""
+          echo "libGLESv2_static.a:"
+          printf '%s\n' "$GLES_MEMBERS"
+
           EGL_COUNT=$(
-            /usr/bin/ar -t "$EGL" |
-            wc -l |
-            tr -d ' '
+            printf '%s\n' "$EGL_MEMBERS" |
+            grep -c '\.o$' || true
           )
 
           GLES_COUNT=$(
-            /usr/bin/ar -t "$GLES" |
-            wc -l |
-            tr -d ' '
+            printf '%s\n' "$GLES_MEMBERS" |
+            grep -c '\.o$' || true
           )
 
-          echo "libEGL_static.a members: $EGL_COUNT"
-          echo "libGLESv2_static.a members: $GLES_COUNT"
+          echo ""
+          echo "EGL object members: $EGL_COUNT"
+          echo "GLES object members: $GLES_COUNT"
 
           if [ "$EGL_COUNT" -lt 1 ]; then
-            echo "ERROR: libEGL_static.a contains no members."
+            echo "ERROR: libEGL_static.a contains no object members."
             exit 1
           fi
 
           if [ "$GLES_COUNT" -lt 1 ]; then
-            echo "ERROR: libGLESv2_static.a contains no members."
+            echo "ERROR: libGLESv2_static.a contains no object members."
             exit 1
           fi
-
-          echo ""
-          echo "First EGL members:"
-          /usr/bin/ar -t "$EGL" | head -30
-
-          echo ""
-          echo "First GLES members:"
-          /usr/bin/ar -t "$GLES" | head -30
 
           echo ""
           echo "=================================================="
@@ -829,12 +835,12 @@ jobs:
           echo "GLES object files: $GLES_OBJECTS"
 
           if [ "$EGL_OBJECTS" -lt 1 ]; then
-            echo "ERROR: libEGL_static.a contains no object files."
+            echo "ERROR: Could not extract EGL object files."
             exit 1
           fi
 
           if [ "$GLES_OBJECTS" -lt 1 ]; then
-            echo "ERROR: libGLESv2_static.a contains no object files."
+            echo "ERROR: Could not extract GLES object files."
             exit 1
           fi
 
@@ -849,12 +855,11 @@ jobs:
           while IFS= read -r -d '' obj; do
             DESCRIPTION="$(file "$obj")"
 
+            echo "$DESCRIPTION"
+
             if echo "$DESCRIPTION" | grep -Eqi \
               'Mach-O.*arm64|Mach-O 64-bit.*arm64'; then
               EGL_ARM64=$((EGL_ARM64 + 1))
-            else
-              echo "WARNING: non-ARM64 EGL object:"
-              echo "$DESCRIPTION"
             fi
           done < <(
             find "$TMP_EGL" \
@@ -863,15 +868,16 @@ jobs:
               -print0
           )
 
+          echo ""
+
           while IFS= read -r -d '' obj; do
             DESCRIPTION="$(file "$obj")"
+
+            echo "$DESCRIPTION"
 
             if echo "$DESCRIPTION" | grep -Eqi \
               'Mach-O.*arm64|Mach-O 64-bit.*arm64'; then
               GLES_ARM64=$((GLES_ARM64 + 1))
-            else
-              echo "WARNING: non-ARM64 GLES object:"
-              echo "$DESCRIPTION"
             fi
           done < <(
             find "$TMP_GLES" \
@@ -926,16 +932,51 @@ jobs:
 
           echo ""
           echo "=================================================="
-          echo "LLVM AR TEST"
+          echo "SYMBOL SAMPLE"
           echo "=================================================="
 
-          llvm-ar -t "$EGL" | head -20
-          llvm-ar -t "$GLES" | head -20
+          echo ""
+          echo "EGL:"
+          nm -gU "$EGL" 2>/dev/null | head -30 || true
+
+          echo ""
+          echo "GLES:"
+          nm -gU "$GLES" 2>/dev/null | head -30 || true
+
+          echo ""
+          echo "=================================================="
+          echo "APPLE AR VALIDATION"
+          echo "=================================================="
+
+          /usr/bin/ar -s "$EGL"
+          /usr/bin/ar -s "$GLES"
+
+          /usr/bin/ar -t "$EGL" >/dev/null
+          /usr/bin/ar -t "$GLES" >/dev/null
+
+          echo "Apple ar successfully opened both archives."
 
           echo ""
           echo "=================================================="
           echo "STATIC LIBRARIES PASSED VALIDATION"
           echo "=================================================="
+
+          echo ""
+          echo "libEGL_static.a:"
+          echo "  Size:    ${EGL_SIZE} bytes"
+          echo "  Objects: ${EGL_OBJECTS}"
+          echo "  ARM64:   ${EGL_ARM64}"
+          echo "  Symbols: ${EGL_SYMBOLS}"
+
+          echo ""
+          echo "libGLESv2_static.a:"
+          echo "  Size:    ${GLES_SIZE} bytes"
+          echo "  Objects: ${GLES_OBJECTS}"
+          echo "  ARM64:   ${GLES_ARM64}"
+          echo "  Symbols: ${GLES_SYMBOLS}"
+
+          echo ""
+          echo "ANGLE iOS ARM64 static archives are valid."
 
       - name: Inspect Generated Archives
         shell: bash
