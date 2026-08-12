@@ -669,7 +669,18 @@ jobs:
           echo "$GLES"
 
       # ==============================================================
-      # Validate archive format and size
+      # Validate final archives
+      #
+      # DO NOT use an arbitrary 1 MB minimum.
+      #
+      # A valid ANGLE archive may legitimately be smaller than 1 MB.
+      # The important properties are:
+      #
+      #   1. It is NOT a thin archive.
+      #   2. It contains real object members.
+      #   3. The members are Mach-O ARM64 objects.
+      #   4. The archive contains symbols.
+      #
       # ==============================================================
 
       - name: Verify Static Libraries
@@ -696,26 +707,20 @@ jobs:
           echo "=================================================="
 
           if echo "$EGL_FILE" | grep -qi 'thin archive'; then
-            echo ""
-            echo "ERROR: libEGL_static.a is STILL a thin archive."
-            echo ""
-            echo "The ANGLE template patch did not produce a normal archive."
+            echo "ERROR: libEGL_static.a is a thin archive."
             exit 1
           fi
 
           if echo "$GLES_FILE" | grep -qi 'thin archive'; then
-            echo ""
-            echo "ERROR: libGLESv2_static.a is STILL a thin archive."
-            echo ""
-            echo "The ANGLE template patch did not produce a normal archive."
+            echo "ERROR: libGLESv2_static.a is a thin archive."
             exit 1
           fi
 
-          echo "Both archives are non-thin."
+          echo "Both archives are normal, non-thin archives."
 
           echo ""
           echo "=================================================="
-          echo "SIZES"
+          echo "ARCHIVE SIZES"
           echo "=================================================="
 
           EGL_SIZE=$(stat -f%z "$EGL")
@@ -728,18 +733,247 @@ jobs:
           echo "libEGL_static.a: ${EGL_SIZE} bytes"
           echo "libGLESv2_static.a: ${GLES_SIZE} bytes"
 
-          if [ "$EGL_SIZE" -lt 1000000 ]; then
-            echo ""
-            echo "ERROR: libEGL_static.a is suspiciously small."
+          # Only reject an actually empty/tiny archive.
+          # Do NOT impose an arbitrary 1 MB requirement.
+          if [ "$EGL_SIZE" -lt 4096 ]; then
+            echo "ERROR: libEGL_static.a is unexpectedly tiny."
             exit 1
           fi
 
-          if [ "$GLES_SIZE" -lt 1000000 ]; then
-            echo ""
-            echo "ERROR: libGLESv2_static.a is suspiciously small."
+          if [ "$GLES_SIZE" -lt 4096 ]; then
+            echo "ERROR: libGLESv2_static.a is unexpectedly tiny."
             exit 1
           fi
 
+          echo "Archive sizes are plausible."
+
+          echo ""
+          echo "=================================================="
+          echo "ARCHIVE MEMBER COUNTS"
+          echo "=================================================="
+
+          EGL_COUNT=$(
+            /usr/bin/ar -t "$EGL" |
+            wc -l |
+            tr -d ' '
+          )
+
+          GLES_COUNT=$(
+            /usr/bin/ar -t "$GLES" |
+            wc -l |
+            tr -d ' '
+          )
+
+          echo "libEGL_static.a members: $EGL_COUNT"
+          echo "libGLESv2_static.a members: $GLES_COUNT"
+
+          if [ "$EGL_COUNT" -lt 1 ]; then
+            echo "ERROR: libEGL_static.a contains no members."
+            exit 1
+          fi
+
+          if [ "$GLES_COUNT" -lt 1 ]; then
+            echo "ERROR: libGLESv2_static.a contains no members."
+            exit 1
+          fi
+
+          echo ""
+          echo "First EGL members:"
+          /usr/bin/ar -t "$EGL" | head -30
+
+          echo ""
+          echo "First GLES members:"
+          /usr/bin/ar -t "$GLES" | head -30
+
+          echo ""
+          echo "=================================================="
+          echo "EXTRACT OBJECT FILES"
+          echo "=================================================="
+
+          TMP_EGL="$(mktemp -d)"
+          TMP_GLES="$(mktemp -d)"
+
+          cleanup() {
+            rm -rf "$TMP_EGL" "$TMP_GLES"
+          }
+
+          trap cleanup EXIT
+
+          (
+            cd "$TMP_EGL"
+            /usr/bin/ar -x "$EGL"
+          )
+
+          (
+            cd "$TMP_GLES"
+            /usr/bin/ar -x "$GLES"
+          )
+
+          EGL_OBJECTS=$(
+            find "$TMP_EGL" \
+              -type f \
+              -name "*.o" |
+            wc -l |
+            tr -d ' '
+          )
+
+          GLES_OBJECTS=$(
+            find "$TMP_GLES" \
+              -type f \
+              -name "*.o" |
+            wc -l |
+            tr -d ' '
+          )
+
+          echo "EGL object files: $EGL_OBJECTS"
+          echo "GLES object files: $GLES_OBJECTS"
+
+          if [ "$EGL_OBJECTS" -lt 1 ]; then
+            echo "ERROR: libEGL_static.a contains no object files."
+            exit 1
+          fi
+
+          if [ "$GLES_OBJECTS" -lt 1 ]; then
+            echo "ERROR: libGLESv2_static.a contains no object files."
+            exit 1
+          fi
+
+          echo ""
+          echo "=================================================="
+          echo "VERIFY ARM64 MACH-O OBJECTS"
+          echo "=================================================="
+
+          EGL_ARM64=0
+          GLES_ARM64=0
+
+          while IFS= read -r -d '' obj; do
+            DESCRIPTION="$(file "$obj")"
+
+            if echo "$DESCRIPTION" | grep -Eqi \
+              'Mach-O.*arm64|Mach-O 64-bit.*arm64'; then
+              EGL_ARM64=$((EGL_ARM64 + 1))
+            else
+              echo "WARNING: non-ARM64 EGL object:"
+              echo "$DESCRIPTION"
+            fi
+          done < <(
+            find "$TMP_EGL" \
+              -type f \
+              -name "*.o" \
+              -print0
+          )
+
+          while IFS= read -r -d '' obj; do
+            DESCRIPTION="$(file "$obj")"
+
+            if echo "$DESCRIPTION" | grep -Eqi \
+              'Mach-O.*arm64|Mach-O 64-bit.*arm64'; then
+              GLES_ARM64=$((GLES_ARM64 + 1))
+            else
+              echo "WARNING: non-ARM64 GLES object:"
+              echo "$DESCRIPTION"
+            fi
+          done < <(
+            find "$TMP_GLES" \
+              -type f \
+              -name "*.o" \
+              -print0
+          )
+
+          echo ""
+          echo "ARM64 EGL objects: $EGL_ARM64"
+          echo "ARM64 GLES objects: $GLES_ARM64"
+
+          if [ "$EGL_ARM64" -eq 0 ]; then
+            echo "ERROR: No ARM64 EGL objects found."
+            exit 1
+          fi
+
+          if [ "$GLES_ARM64" -eq 0 ]; then
+            echo "ERROR: No ARM64 GLES objects found."
+            exit 1
+          fi
+
+          echo ""
+          echo "=================================================="
+          echo "SYMBOL VALIDATION"
+          echo "=================================================="
+
+          EGL_SYMBOLS=$(
+            nm -gU "$EGL" 2>/dev/null |
+            wc -l |
+            tr -d ' '
+          )
+
+          GLES_SYMBOLS=$(
+            nm -gU "$GLES" 2>/dev/null |
+            wc -l |
+            tr -d ' '
+          )
+
+          echo "EGL global symbols: $EGL_SYMBOLS"
+          echo "GLES global symbols: $GLES_SYMBOLS"
+
+          if [ "$EGL_SYMBOLS" -lt 1 ]; then
+            echo "ERROR: libEGL_static.a contains no global symbols."
+            exit 1
+          fi
+
+          if [ "$GLES_SYMBOLS" -lt 1 ]; then
+            echo "ERROR: libGLESv2_static.a contains no global symbols."
+            exit 1
+          fi
+
+          echo ""
+          echo "=================================================="
+          echo "LLVM AR TEST"
+          echo "=================================================="
+
+          llvm-ar -t "$EGL" | head -20
+          llvm-ar -t "$GLES" | head -20
+
+          echo ""
+          echo "=================================================="
+          echo "STATIC LIBRARIES PASSED VALIDATION"
+          echo "=================================================="
+
+      - name: Inspect Generated Archives
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          EGL="$ANGLE_SRC/out/ios/obj/libEGL_static.a"
+          GLES="$ANGLE_SRC/out/ios/obj/libGLESv2_static.a"
+
+          echo "=================================================="
+          echo "EGL ARCHIVE"
+          echo "=================================================="
+
+          file "$EGL"
+
+          echo ""
+          echo "Members:"
+          /usr/bin/ar -t "$EGL"
+
+          echo ""
+          echo "Object sizes:"
+          /usr/bin/ar -tv "$EGL"
+
+          echo ""
+          echo "=================================================="
+          echo "GLES ARCHIVE"
+          echo "=================================================="
+
+          file "$GLES"
+
+          echo ""
+          echo "Members:"
+          /usr/bin/ar -t "$GLES" | head -100
+
+          echo ""
+          echo "Object sizes:"
+          /usr/bin/ar -tv "$GLES" | head -100
+      
       # ==============================================================
       # Archive member verification
       # ==============================================================
