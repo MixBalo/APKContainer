@@ -1,34 +1,31 @@
-name: Build ANGLE iOS ARM64 Static Libraries
+name: Build ANGLE iOS ARM64
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/build-angle.yml"
 
 permissions:
   contents: read
 
 jobs:
   build-angle:
-    name: Build ANGLE - iOS arm64
+    name: Build ANGLE static libraries for iOS ARM64
     runs-on: macos-latest
 
     env:
-      ANGLE_DIR: ${{ github.workspace }}/angle-work
-      OUT_DIR: ${{ github.workspace }}/angle-work/out/ios-arm64
-      ARTIFACT_DIR: ${{ github.workspace }}/angle-artifacts
+      ANGLE_SRC: ${{ github.workspace }}/angle-work
+      ANGLE_OUT: ${{ github.workspace }}/angle-work/out/ios-arm64
+      IOS_DEPLOYMENT_TARGET: "16.0"
 
     steps:
       # ============================================================
-      # 1. CHECKOUT APKContainer
+      # Checkout APKContainer
       # ============================================================
 
       - name: Checkout APKContainer
         uses: actions/checkout@v6
 
       # ============================================================
-      # 2. XCODE
+      # Xcode
       # ============================================================
 
       - name: Select Xcode
@@ -36,168 +33,47 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Available Xcodes:"
+          echo "Available Xcode installations:"
           ls -1 /Applications | grep '^Xcode' || true
 
-          # macos-latest normally already has a suitable Xcode.
-          # Do not hard-code a version that may disappear from the runner.
-          if [ -d "/Applications/Xcode.app" ]; then
-            sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-          fi
+          # macos-latest normally provides the current stable Xcode.
+          # Do not hard-code an obsolete Xcode path.
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 
           echo "Xcode:"
           xcodebuild -version
 
-          echo "Developer directory:"
-          xcode-select -p
+          echo "SDK:"
+          xcrun --sdk iphoneos --show-sdk-path
 
-      - name: Accept Xcode License
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo xcodebuild -license accept
-
-      - name: Verify iOS SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          IOS_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
-          IOS_SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
-
-          echo "iOS SDK:"
-          echo "$IOS_SDK"
-
-          echo "iOS SDK version:"
-          echo "$IOS_SDK_VERSION"
-
-          test -d "$IOS_SDK"
-
-      # ============================================================
-      # 3. TOOLCHAIN
-      # ============================================================
-
-      - name: Verify Apple Toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "clang:"
+          echo "Clang:"
           xcrun --sdk iphoneos clang --version
 
-          echo ""
-          echo "clang++:"
-          xcrun --sdk iphoneos clang++ --version
-
-          echo ""
-          echo "ar:"
-          xcrun --sdk iphoneos -f ar
-
-          echo ""
-          echo "ranlib:"
-          xcrun --sdk iphoneos -f ranlib
-
-          echo ""
-          echo "nm:"
-          xcrun --sdk iphoneos -f nm
-
-          echo ""
-          echo "lipo:"
-          xcrun --sdk iphoneos -f lipo
-
-          echo ""
-          echo "ninja:"
-          ninja --version || true
-
       # ============================================================
-      # 4. DEPOT TOOLS
+      # depot_tools
       # ============================================================
 
-      - name: Cache depot_tools
-        uses: actions/cache@v5
-        with:
-          path: ~/depot_tools
-          key: depot-tools-${{ runner.os }}-v2
-          restore-keys: |
-            depot-tools-${{ runner.os }}-
-
-      - name: Install / Update depot_tools
+      - name: Install depot_tools
         shell: bash
         run: |
           set -euo pipefail
 
-          DEPOT="$HOME/depot_tools"
-
-          if [ ! -d "$DEPOT/.git" ]; then
-            echo "Cloning depot_tools..."
-
-            rm -rf "$DEPOT"
-
-            git clone \
-              --depth=1 \
+          if [ ! -d "$HOME/depot_tools" ]; then
+            git clone --depth=1 \
               https://chromium.googlesource.com/chromium/tools/depot_tools.git \
-              "$DEPOT"
-          else
-            echo "Updating cached depot_tools..."
-
-            git -C "$DEPOT" fetch \
-              --depth=1 \
-              origin \
-              main
-
-            git -C "$DEPOT" reset \
-              --hard \
-              origin/main
-
-            git -C "$DEPOT" clean -ffd
+              "$HOME/depot_tools"
           fi
 
-          echo "$DEPOT" >> "$GITHUB_PATH"
-          echo "$DEPOT/python-bin" >> "$GITHUB_PATH"
+          echo "$HOME/depot_tools" >> "$GITHUB_PATH"
 
-          export PATH="$DEPOT:$DEPOT/python-bin:$PATH"
+          export PATH="$HOME/depot_tools:$PATH"
 
-          echo ""
           echo "depot_tools:"
-          echo "$DEPOT"
-
-          echo ""
-          echo "git:"
-          git --version
-
-          echo ""
-          echo "python:"
-          python3 --version
-
-          echo ""
-          echo "gclient:"
-          command -v gclient
-          gclient --version || true
-
-          echo ""
-          echo "fetch:"
-          command -v fetch
-
-          echo ""
-          echo "autoninja:"
-          command -v autoninja
-
-          echo ""
-          echo "gn wrapper:"
-          command -v gn || true
-
-          echo ""
-          echo "ninja:"
-          command -v ninja
-          ninja --version
+          command -v fetch || true
+          command -v gclient || true
 
       # ============================================================
-      # 5. FETCH ANGLE
-      #
-      # Do NOT cache the entire ANGLE checkout.
-      #
-      # A stale source/dependency cache is what caused several of
-      # the previous confusing GN/depot_tools failures.
+      # Fetch ANGLE
       # ============================================================
 
       - name: Fetch ANGLE
@@ -205,73 +81,31 @@ jobs:
         run: |
           set -euo pipefail
 
-          rm -rf "$ANGLE_DIR"
+          rm -rf "$ANGLE_SRC"
+          mkdir -p "$ANGLE_SRC"
 
-          mkdir -p "$ANGLE_DIR"
+          cd "$ANGLE_SRC"
 
-          cd "$ANGLE_DIR"
-
-          # fetch angle creates the ANGLE checkout and .gclient.
           fetch angle
 
       # ============================================================
-      # 6. SYNC ANGLE DEPENDENCIES
+      # Synchronize ANGLE dependencies
       # ============================================================
 
-      - name: Synchronize ANGLE
+      - name: Sync ANGLE
         shell: bash
         run: |
           set -euo pipefail
 
-          cd "$ANGLE_DIR"
+          cd "$ANGLE_SRC"
 
-          gclient sync \
-            --no-history \
-            --force \
-            --reset \
-            --jobs="$(sysctl -n hw.ncpu)"
+          gclient sync --no-history --jobs=4
 
       # ============================================================
-      # 7. VERIFY ANGLE CHECKOUT
-      # ============================================================
-
-      - name: Verify ANGLE Checkout
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "$ANGLE_DIR"
-
-          test -f ".gclient"
-          test -f "BUILD.gn"
-          test -f "DEPS"
-
-          echo "ANGLE:"
-          git rev-parse HEAD
-
-          echo ""
-          git log -1 --oneline
-
-          echo ""
-          echo "ANGLE directory:"
-          pwd
-
-          echo ""
-          echo "ANGLE files:"
-          ls -la | head -50
-
-      # ============================================================
-      # 8. LOCATE GN
+      # Make GN available
       #
-      # Current depot_tools gn.py first looks for:
-      #
-      #   ANGLE/third_party/gn/gn
-      #
-      # This avoids the previous:
-      #
-      #   gn.py: Unable to find gn in your $PATH
-      #
-      # failure.
+      # Do not assume `gn` happens to be on PATH.
+      # ANGLE/depot_tools normally provides the generated GN binary.
       # ============================================================
 
       - name: Locate GN
@@ -279,404 +113,427 @@ jobs:
         run: |
           set -euo pipefail
 
-          cd "$ANGLE_DIR"
+          export PATH="$HOME/depot_tools:$PATH"
 
-          echo "=================================================="
-          echo "LOCATING GN"
-          echo "=================================================="
+          cd "$ANGLE_SRC"
+
+          echo "Searching for GN..."
 
           GN=""
 
-          # Current ANGLE/depot_tools layout.
-          if [ -x "$ANGLE_DIR/third_party/gn/gn" ]; then
-            GN="$ANGLE_DIR/third_party/gn/gn"
-          fi
-
-          # Some checkouts use buildtools.
-          if [ -z "$GN" ] && [ -x "$ANGLE_DIR/buildtools/mac/gn" ]; then
-            GN="$ANGLE_DIR/buildtools/mac/gn"
-          fi
-
-          if [ -z "$GN" ] && [ -x "$ANGLE_DIR/buildtools/mac/gn/gn" ]; then
-            GN="$ANGLE_DIR/buildtools/mac/gn/gn"
-          fi
-
-          # depot_tools PATH fallback.
-          if [ -z "$GN" ]; then
-            if command -v gn >/dev/null 2>&1; then
-              GN="$(command -v gn)"
+          for candidate in \
+            "$(command -v gn 2>/dev/null || true)" \
+            "$ANGLE_SRC/buildtools/mac/gn" \
+            "$ANGLE_SRC/buildtools/mac/gn/gn" \
+            "$HOME/depot_tools/gn" \
+            "$HOME/depot_tools/gn.py"
+          do
+            if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+              GN="$candidate"
+              break
             fi
-          fi
+          done
 
           if [ -z "$GN" ]; then
-            echo "ERROR: GN executable could not be found."
+            echo "GN was not found after gclient sync."
+
             echo ""
             echo "Searching checkout:"
-            find "$ANGLE_DIR" \
+            find "$ANGLE_SRC" \
               -type f \
-              \( -name gn -o -name gn.exe \) \
-              -print 2>/dev/null | head -100
+              \( -name gn -o -name gn.py \) \
+              -print 2>/dev/null | head -50
+
+            echo ""
+            echo "PATH:"
+            echo "$PATH"
+
             exit 1
           fi
-
-          chmod +x "$GN"
 
           echo "GN:"
           echo "$GN"
 
-          echo ""
-          echo "GN version:"
           "$GN" --version
 
-          echo ""
-          echo "GN file:"
-          file "$GN"
-
-          echo "ANGLE_GN=$GN" >> "$GITHUB_ENV"
+          echo "GN_BIN=$GN" >> "$GITHUB_ENV"
 
       # ============================================================
-      # 9. VERIFY TARGETS
+      # Verify exact ANGLE revision
       # ============================================================
 
-      - name: Verify ANGLE Static Targets
+      - name: Verify ANGLE source
         shell: bash
         run: |
           set -euo pipefail
 
-          cd "$ANGLE_DIR"
+          cd "$ANGLE_SRC"
 
-          echo "=================================================="
-          echo "STATIC TARGETS"
-          echo "=================================================="
+          echo "ANGLE source:"
+          pwd
 
+          echo ""
+          echo "ANGLE revision:"
+          git rev-parse HEAD
+
+          echo ""
+          git log -1 --oneline
+
+          echo ""
+          echo "BUILD.gn:"
+          test -f BUILD.gn
+
+          echo ""
+          echo "gni/angle.gni:"
+          test -f gni/angle.gni
+
+          echo ""
+          echo "ANGLE static targets:"
           grep -n \
             -E \
-            'angle_static_library\("libGLESv2_static"\)|libEGL_template\("libEGL_static"\)|group\("angle_static"\)' \
+            'libGLESv2_(thin_)?static|libEGL_static' \
             BUILD.gn
 
-          echo ""
-          echo "ANGLE static group:"
-          grep -n -A12 \
-            'group("angle_static")' \
-            BUILD.gn
-
-          echo ""
-          echo "GLES target:"
-          grep -n -A20 \
-            'angle_static_library("libGLESv2_static")' \
-            BUILD.gn | head -30
-
-          echo ""
-          echo "EGL target:"
-          grep -n -A20 \
-            'libEGL_template("libEGL_static")' \
-            BUILD.gn | head -30
-
       # ============================================================
-      # 10. NO BUILD.GN PATCHING
+      # Patch ANGLE:
       #
-      # IMPORTANT:
+      # Create a genuinely COMPLETE libGLESv2 static target.
       #
-      # We do not modify ANGLE's static-library template.
+      # We intentionally do NOT try to make libEGL complete because
+      # APKContainer links both archives:
       #
-      # ANGLE's generated static libraries may legitimately contain
-      # one jumbo/autogen object. That is not evidence of a broken
-      # archive.
+      #   libEGL.a
+      #   libGLESv2.a
       #
-      # libEGL_static.a is expected to be much smaller than the
-      # actual GLES implementation because libEGL is the EGL front
-      # end and libGLESv2_static contains the actual GLES/ANGLE
-      # implementation.
+      # Making both complete would duplicate the entire ANGLE core.
+      #
+      # The complete GLES archive contains:
+      #
+      #   libGLESv2 entry points
+      #   libGLESv2 implementation wrapper
+      #   libANGLE
+      #   Metal backend
+      #   ANGLE's static dependencies
+      #
+      # libEGL.a remains the EGL front-end.
       # ============================================================
 
-      - name: Verify No ANGLE Source Patch Required
+      - name: Add complete ANGLE iOS target
         shell: bash
         run: |
           set -euo pipefail
 
-          cd "$ANGLE_DIR"
+          cd "$ANGLE_SRC"
 
-          echo "Using upstream ANGLE build files unchanged."
+          python3 <<'PY'
+          from pathlib import Path
 
-          git status --short
+          path = Path("BUILD.gn")
+          text = path.read_text()
+
+          target = 'static_library("libGLESv2_ios_complete")'
+
+          if target in text:
+              print("Complete target already exists.")
+              raise SystemExit(0)
+
+          marker = 'angle_static_library("libGLESv2_static") {'
+
+          if marker not in text:
+              raise SystemExit(
+                  "ERROR: Could not find libGLESv2_static target."
+              )
+
+          insert = r'''
+          # ============================================================
+          # APKContainer iOS complete static ANGLE library.
+          #
+          # libGLESv2_static is intentionally only the small public
+          # library wrapper. The actual implementation lives behind
+          # libGLESv2_thin_static -> libANGLE and its dependencies.
+          #
+          # This target is the distributable monolithic archive.
+          # ============================================================
+
+          static_library("libGLESv2_ios_complete") {
+            sources = libglesv2_entry_point_sources + libglesv2_sources
+
+            configs += [
+              ":debug_annotations_config",
+            ]
+
+            public_configs += [
+              ":angle_static_config",
+            ]
+
+            deps = [
+              ":includes",
+              ":libANGLE",
+            ]
+
+            complete_static_lib = true
+          }
+
+          '''
+
+          text = text.replace(
+              marker,
+              insert + marker,
+              1,
+          )
+
+          path.write_text(text)
+
+          print("Added libGLESv2_ios_complete.")
+          PY
+
+          echo ""
+          echo "Verifying target:"
+          grep -n -A35 \
+            'static_library("libGLESv2_ios_complete")' \
+            BUILD.gn
 
       # ============================================================
-      # 11. GENERATE GN FILES
-      #
-      # Metal only.
-      #
-      # iOS device.
-      #
-      # ARM64.
+      # Generate GN files
       # ============================================================
 
-      - name: Generate iOS ARM64 Build
+      - name: Generate GN build
         shell: bash
         run: |
           set -euo pipefail
 
-          cd "$ANGLE_DIR"
+          cd "$ANGLE_SRC"
 
-          rm -rf "$OUT_DIR"
+          rm -rf "$ANGLE_OUT"
 
-          IOS_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
-
-          echo "Generating:"
-          echo "$OUT_DIR"
-
-          "$ANGLE_GN" gen "$OUT_DIR" --args='
+          "$GN_BIN" gen "$ANGLE_OUT" --args='
             target_os="ios"
             target_cpu="arm64"
             target_environment="device"
 
+            ios_deployment_target="16.0"
+
             is_debug=false
             is_component_build=false
-            is_clang=true
 
-            use_system_xcode=true
             ios_enable_code_signing=false
 
-            angle_enable_metal=true
             angle_enable_vulkan=false
             angle_enable_gl=false
-            angle_enable_null=false
-            angle_enable_wgpu=false
+            angle_enable_metal=true
 
-            angle_enable_essl=true
-            angle_enable_glsl=true
+            angle_build_tests=false
+            angle_build_perftests=false
+            angle_build_samples=false
 
             use_thin_archives=false
-
-            symbol_level=0
-            blink_symbol_level=0
-
-            enable_nacl=false
-            use_lld=false
           '
 
       # ============================================================
-      # 12. INSPECT GN CONFIGURATION
+      # Inspect configuration
       # ============================================================
 
-      - name: Inspect GN Configuration
+      - name: Inspect GN configuration
         shell: bash
         run: |
           set -euo pipefail
 
-          cd "$ANGLE_DIR"
+          cd "$ANGLE_SRC"
 
           echo "=================================================="
           echo "GN ARGS"
           echo "=================================================="
 
-          "$ANGLE_GN" args "$OUT_DIR" --list | \
-            grep -E \
-              'target_os|target_cpu|target_environment|is_debug|is_component_build|angle_enable_metal|angle_enable_vulkan|angle_enable_gl|use_thin_archives' \
-              || true
+          "$GN_BIN" args "$ANGLE_OUT" --list
 
           echo ""
           echo "=================================================="
-          echo "GN TARGETS"
+          echo "COMPLETE GLES TARGET"
           echo "=================================================="
 
-          "$ANGLE_GN" desc \
-            "$OUT_DIR" \
+          "$GN_BIN" desc \
+            "$ANGLE_OUT" \
+            //:libGLESv2_ios_complete
+
+          echo ""
+          echo "=================================================="
+          echo "EGL TARGET"
+          echo "=================================================="
+
+          "$GN_BIN" desc \
+            "$ANGLE_OUT" \
             //:libEGL_static
 
-          echo ""
-
-          "$ANGLE_GN" desc \
-            "$OUT_DIR" \
-            //:libGLESv2_static
-
       # ============================================================
-      # 13. BUILD BOTH STATIC LIBRARIES
+      # Build the complete GLES archive
       # ============================================================
 
-      - name: Build ANGLE Static Libraries
+      - name: Build complete ANGLE GLES library
         shell: bash
         run: |
           set -euo pipefail
 
-          cd "$ANGLE_DIR"
+          cd "$ANGLE_SRC"
 
-          echo "=================================================="
-          echo "BUILD libGLESv2_static"
-          echo "=================================================="
+          echo "Building complete ANGLE GLES archive..."
 
           autoninja \
-            -C "$OUT_DIR" \
-            libGLESv2_static
+            -C "$ANGLE_OUT" \
+            libGLESv2_ios_complete
 
-          echo ""
-          echo "=================================================="
-          echo "BUILD libEGL_static"
-          echo "=================================================="
+      # ============================================================
+      # Build EGL front-end
+      # ============================================================
+
+      - name: Build EGL library
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$ANGLE_SRC"
+
+          echo "Building ANGLE EGL archive..."
 
           autoninja \
-            -C "$OUT_DIR" \
+            -C "$ANGLE_OUT" \
             libEGL_static
 
       # ============================================================
-      # 14. LOCATE ARCHIVES
-      # ============================================================
-
-      - name: Locate Generated Archives
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "=================================================="
-          echo "GENERATED ARCHIVES"
-          echo "=================================================="
-
-          find "$OUT_DIR" \
-            -type f \
-            \( \
-              -name "libEGL_static.a" \
-              -o \
-              -name "libGLESv2_static.a" \
-            \) \
-            -print \
-            | sort
-
-      # ============================================================
-      # 15. VERIFY ARCHIVES
+      # Prepare final APKContainer archives
       #
-      # NO arbitrary MB threshold.
-      # NO arbitrary object-count threshold.
-      # NO llvm-ar dependency.
+      # IMPORTANT:
+      #
+      # APKContainer expects:
+      #
+      # Native/ANGLE/lib/libEGL.a
+      # Native/ANGLE/lib/libGLESv2.a
       # ============================================================
 
-      - name: Validate Static Archives
+      - name: Prepare ANGLE libraries
         shell: bash
         run: |
           set -euo pipefail
 
-          EGL="$OUT_DIR/obj/libEGL_static.a"
-          GLES="$OUT_DIR/obj/libGLESv2_static.a"
+          SRC_EGL="$ANGLE_OUT/obj/libEGL_static.a"
+          SRC_GLES="$ANGLE_OUT/obj/libGLESv2_ios_complete.a"
 
-          test -f "$EGL"
-          test -f "$GLES"
+          FINAL="$GITHUB_WORKSPACE/Native/ANGLE/lib"
 
-          echo "=================================================="
-          echo "ARCHIVE PATHS"
-          echo "=================================================="
+          echo "EGL source:"
+          echo "$SRC_EGL"
 
-          echo "EGL:"
-          echo "$EGL"
+          echo "GLES source:"
+          echo "$SRC_GLES"
+
+          test -f "$SRC_EGL"
+          test -f "$SRC_GLES"
+
+          rm -rf "$FINAL"
+          mkdir -p "$FINAL"
+
+          cp "$SRC_EGL" "$FINAL/libEGL.a"
+          cp "$SRC_GLES" "$FINAL/libGLESv2.a"
 
           echo ""
-          echo "GLES:"
-          echo "$GLES"
+          echo "Final ANGLE libraries:"
+          ls -lh "$FINAL"
 
-          echo ""
+      # ============================================================
+      # Validate archive types
+      # ============================================================
+
+      - name: Validate archive format
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          EGL="$GITHUB_WORKSPACE/Native/ANGLE/lib/libEGL.a"
+          GLES="$GITHUB_WORKSPACE/Native/ANGLE/lib/libGLESv2.a"
+
           echo "=================================================="
           echo "FILE TYPES"
           echo "=================================================="
 
-          EGL_FILE="$(file "$EGL")"
-          GLES_FILE="$(file "$GLES")"
+          file "$EGL"
+          file "$GLES"
 
-          echo "$EGL_FILE"
-          echo "$GLES_FILE"
-
-          echo ""
-          echo "=================================================="
-          echo "THIN ARCHIVE CHECK"
-          echo "=================================================="
-
-          if echo "$EGL_FILE" | grep -qi "thin archive"; then
-            echo "ERROR: EGL archive is thin."
+          if file "$EGL" | grep -qi "thin"; then
+            echo "ERROR: libEGL.a is thin."
             exit 1
           fi
 
-          if echo "$GLES_FILE" | grep -qi "thin archive"; then
-            echo "ERROR: GLES archive is thin."
+          if file "$GLES" | grep -qi "thin"; then
+            echo "ERROR: libGLESv2.a is thin."
             exit 1
           fi
 
-          echo "Both archives are normal Apple ar archives."
+      # ============================================================
+      # Validate archive members
+      # ============================================================
 
-          echo ""
-          echo "=================================================="
-          echo "SIZES"
-          echo "=================================================="
+      - name: Validate archive contents
+        shell: bash
+        run: |
+          set -euo pipefail
 
-          EGL_SIZE="$(stat -f%z "$EGL")"
-          GLES_SIZE="$(stat -f%z "$GLES")"
+          EGL="$GITHUB_WORKSPACE/Native/ANGLE/lib/libEGL.a"
+          GLES="$GITHUB_WORKSPACE/Native/ANGLE/lib/libGLESv2.a"
 
-          echo "EGL:  $EGL_SIZE bytes"
-          echo "GLES: $GLES_SIZE bytes"
+          EGL_SIZE=$(stat -f%z "$EGL")
+          GLES_SIZE=$(stat -f%z "$GLES")
 
-          # Only reject genuinely empty archives.
-          if [ "$EGL_SIZE" -le 1024 ]; then
-            echo "ERROR: EGL archive is effectively empty."
-            exit 1
-          fi
-
-          if [ "$GLES_SIZE" -le 1024 ]; then
-            echo "ERROR: GLES archive is effectively empty."
-            exit 1
-          fi
-
-          echo ""
-          echo "=================================================="
-          echo "APPLE AR"
-          echo "=================================================="
-
-          AR="$(xcrun --sdk iphoneos -f ar)"
-          RANLIB="$(xcrun --sdk iphoneos -f ranlib)"
-          NM="$(xcrun --sdk iphoneos -f nm)"
-
-          "$AR" -t "$EGL"
-          echo ""
-          "$AR" -t "$GLES"
-
-          echo ""
-          echo "Running ranlib:"
-          "$RANLIB" -t "$EGL" || true
-          "$RANLIB" -t "$GLES" || true
-
-          echo ""
-          echo "=================================================="
-          echo "OBJECT COUNTS"
-          echo "=================================================="
-
-          EGL_OBJECTS="$(
-            "$AR" -t "$EGL" |
-            grep -E '\.o$' |
+          EGL_MEMBERS=$(
+            /usr/bin/ar -t "$EGL" |
+            grep -v '^__.SYMDEF' |
             wc -l |
             tr -d ' '
-          )"
+          )
 
-          GLES_OBJECTS="$(
-            "$AR" -t "$GLES" |
-            grep -E '\.o$' |
+          GLES_MEMBERS=$(
+            /usr/bin/ar -t "$GLES" |
+            grep -v '^__.SYMDEF' |
             wc -l |
             tr -d ' '
-          )"
+          )
 
-          echo "EGL object members:  $EGL_OBJECTS"
-          echo "GLES object members: $GLES_OBJECTS"
-
-          if [ "$EGL_OBJECTS" -lt 1 ]; then
-            echo "ERROR: EGL contains no object members."
-            exit 1
-          fi
-
-          if [ "$GLES_OBJECTS" -lt 1 ]; then
-            echo "ERROR: GLES contains no object members."
-            exit 1
-          fi
+          echo "libEGL.a:"
+          echo "  Size:    $EGL_SIZE bytes"
+          echo "  Objects: $EGL_MEMBERS"
 
           echo ""
-          echo "=================================================="
-          echo "EXTRACT OBJECTS"
-          echo "=================================================="
+          echo "libGLESv2.a:"
+          echo "  Size:    $GLES_SIZE bytes"
+          echo "  Objects: $GLES_MEMBERS"
 
-          TMP_EGL="$(mktemp -d)"
-          TMP_GLES="$(mktemp -d)"
+          # EGL can legitimately be one object.
+          if [ "$EGL_MEMBERS" -lt 1 ]; then
+            echo "ERROR: libEGL.a contains no object members."
+            exit 1
+          fi
+
+          # The complete GLES library MUST contain substantially more
+          # than the one-object wrapper archive.
+          if [ "$GLES_MEMBERS" -lt 20 ]; then
+            echo "ERROR: libGLESv2.a does not look like a complete ANGLE archive."
+            echo ""
+            /usr/bin/ar -t "$GLES"
+            exit 1
+          fi
+
+      # ============================================================
+      # Extract objects and verify ARM64
+      # ============================================================
+
+      - name: Validate ARM64 objects
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          EGL="$GITHUB_WORKSPACE/Native/ANGLE/lib/libEGL.a"
+          GLES="$GITHUB_WORKSPACE/Native/ANGLE/lib/libGLESv2.a"
+
+          TMP_EGL=$(mktemp -d)
+          TMP_GLES=$(mktemp -d)
 
           cleanup() {
             rm -rf "$TMP_EGL" "$TMP_GLES"
@@ -686,59 +543,24 @@ jobs:
 
           (
             cd "$TMP_EGL"
-            "$AR" -x "$EGL"
+            /usr/bin/ar -x "$EGL"
           )
 
           (
             cd "$TMP_GLES"
-            "$AR" -x "$GLES"
+            /usr/bin/ar -x "$GLES"
           )
-
-          EGL_REAL_OBJECTS="$(
-            find "$TMP_EGL" \
-              -type f \
-              -name '*.o' |
-              wc -l |
-              tr -d ' '
-          )"
-
-          GLES_REAL_OBJECTS="$(
-            find "$TMP_GLES" \
-              -type f \
-              -name '*.o' |
-              wc -l |
-              tr -d ' '
-          )"
-
-          echo "Extracted EGL objects:  $EGL_REAL_OBJECTS"
-          echo "Extracted GLES objects: $GLES_REAL_OBJECTS"
-
-          if [ "$EGL_REAL_OBJECTS" -lt 1 ]; then
-            echo "ERROR: No EGL object extracted."
-            exit 1
-          fi
-
-          if [ "$GLES_REAL_OBJECTS" -lt 1 ]; then
-            echo "ERROR: No GLES object extracted."
-            exit 1
-          fi
-
-          echo ""
-          echo "=================================================="
-          echo "MACH-O ARCHITECTURE"
-          echo "=================================================="
 
           EGL_ARM64=0
           GLES_ARM64=0
 
           while IFS= read -r -d '' obj; do
-            DESC="$(file "$obj")"
-
-            echo "$DESC"
-
-            if echo "$DESC" | grep -Eqi \
-              'Mach-O.*arm64|Mach-O 64-bit.*arm64'; then
+            if file "$obj" | grep -Eqi 'Mach-O.*arm64'; then
               EGL_ARM64=$((EGL_ARM64 + 1))
+            else
+              echo "ERROR: non-arm64 EGL object:"
+              file "$obj"
+              exit 1
             fi
           done < <(
             find "$TMP_EGL" \
@@ -748,13 +570,12 @@ jobs:
           )
 
           while IFS= read -r -d '' obj; do
-            DESC="$(file "$obj")"
-
-            echo "$DESC"
-
-            if echo "$DESC" | grep -Eqi \
-              'Mach-O.*arm64|Mach-O 64-bit.*arm64'; then
+            if file "$obj" | grep -Eqi 'Mach-O.*arm64'; then
               GLES_ARM64=$((GLES_ARM64 + 1))
+            else
+              echo "ERROR: non-arm64 GLES object:"
+              file "$obj"
+              exit 1
             fi
           done < <(
             find "$TMP_GLES" \
@@ -763,80 +584,70 @@ jobs:
               -print0
           )
 
-          echo ""
           echo "EGL ARM64 objects:  $EGL_ARM64"
           echo "GLES ARM64 objects: $GLES_ARM64"
 
-          if [ "$EGL_ARM64" -lt 1 ]; then
-            echo "ERROR: EGL contains no ARM64 Mach-O object."
-            exit 1
-          fi
-
-          if [ "$GLES_ARM64" -lt 1 ]; then
-            echo "ERROR: GLES contains no ARM64 Mach-O object."
-            exit 1
-          fi
-
-          echo ""
-          echo "=================================================="
-          echo "SYMBOL VALIDATION"
-          echo "=================================================="
-
-          EGL_SYMBOLS="$(
-            "$NM" -gU "$EGL" 2>/dev/null |
-            wc -l |
-            tr -d ' '
-          )"
-
-          GLES_SYMBOLS="$(
-            "$NM" -gU "$GLES" 2>/dev/null |
-            wc -l |
-            tr -d ' '
-          )"
-
-          echo "EGL global symbols:  $EGL_SYMBOLS"
-          echo "GLES global symbols: $GLES_SYMBOLS"
-
-          if [ "$EGL_SYMBOLS" -lt 1 ]; then
-            echo "ERROR: EGL contains no global symbols."
-            exit 1
-          fi
-
-          if [ "$GLES_SYMBOLS" -lt 1 ]; then
-            echo "ERROR: GLES contains no global symbols."
-            exit 1
-          fi
-
-          echo ""
-          echo "=================================================="
-          echo "IMPORTANT"
-          echo "=================================================="
-
-          echo "A one-object ANGLE archive is valid."
-          echo "Do NOT require 10+ archive members."
-          echo "Do NOT require a minimum MB size."
-          echo "Do NOT require llvm-ar."
+          [ "$EGL_ARM64" -gt 0 ]
+          [ "$GLES_ARM64" -gt 0 ]
 
       # ============================================================
-      # 16. ACTUAL LINK TEST
-      #
-      # This is much more meaningful than checking whether the
-      # archive happens to be large.
-      #
-      # We link a tiny ARM64 iOS executable against the two ANGLE
-      # archives.
+      # Verify symbols
       # ============================================================
 
-      - name: Link Test ANGLE Archives
+      - name: Validate ANGLE symbols
         shell: bash
         run: |
           set -euo pipefail
 
-          EGL="$OUT_DIR/obj/libEGL_static.a"
-          GLES="$OUT_DIR/obj/libGLESv2_static.a"
+          EGL="$GITHUB_WORKSPACE/Native/ANGLE/lib/libEGL.a"
+          GLES="$GITHUB_WORKSPACE/Native/ANGLE/lib/libGLESv2.a"
+
+          EGL_SYMBOLS=$(
+            nm -gU "$EGL" 2>/dev/null |
+            wc -l |
+            tr -d ' '
+          )
+
+          GLES_SYMBOLS=$(
+            nm -gU "$GLES" 2>/dev/null |
+            wc -l |
+            tr -d ' '
+          )
+
+          echo "EGL global symbols:  $EGL_SYMBOLS"
+          echo "GLES global symbols: $GLES_SYMBOLS"
+
+          if [ "$EGL_SYMBOLS" -lt 50 ]; then
+            echo "ERROR: EGL symbol count is unexpectedly low."
+            exit 1
+          fi
+
+          if [ "$GLES_SYMBOLS" -lt 1000 ]; then
+            echo "ERROR: GLES archive does not look like a complete ANGLE implementation."
+            exit 1
+          fi
+
+          echo ""
+          echo "Sample ANGLE symbols:"
+          nm -gU "$GLES" 2>/dev/null |
+            grep -E \
+              'ANGLE|egl|gl' |
+            head -50 || true
+
+      # ============================================================
+      # Verify Apple linker can consume both archives
+      #
+      # This is the important test.
+      # ============================================================
+
+      - name: Link test with Apple clang
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)"
 
           TEST_DIR="$RUNNER_TEMP/angle-link-test"
-
           rm -rf "$TEST_DIR"
           mkdir -p "$TEST_DIR"
 
@@ -855,146 +666,80 @@ jobs:
           }
           EOF
 
-          IOS_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
-          CLANGXX="$(xcrun --sdk iphoneos -f clang++)"
-
-          echo "Compiling link test..."
-
-          "$CLANGXX" \
-            -target arm64-apple-ios \
-            -isysroot "$IOS_SDK" \
-            -miphoneos-version-min=12.0 \
-            -I"$ANGLE_DIR/include" \
-            -c \
+          xcrun --sdk iphoneos clang++ \
+            -arch arm64 \
+            -isysroot "$SDKROOT" \
+            -miphoneos-version-min=16.0 \
+            -std=c++20 \
+            -I"$ANGLE_SRC/include" \
             "$TEST_DIR/main.mm" \
-            -o "$TEST_DIR/main.o"
-
-          echo "Linking against ANGLE..."
-
-          "$CLANGXX" \
-            -target arm64-apple-ios \
-            -isysroot "$IOS_SDK" \
-            -miphoneos-version-min=12.0 \
-            "$TEST_DIR/main.o" \
-            "$EGL" \
-            "$GLES" \
-            -framework Metal \
+            -Wl,-force_load,"$GITHUB_WORKSPACE/Native/ANGLE/lib/libEGL.a" \
+            -Wl,-force_load,"$GITHUB_WORKSPACE/Native/ANGLE/lib/libGLESv2.a" \
             -framework Foundation \
+            -framework Metal \
+            -framework MetalKit \
             -framework QuartzCore \
-            -framework IOSurface \
+            -framework CoreGraphics \
             -framework UIKit \
+            -lz \
             -o "$TEST_DIR/angle-link-test"
 
-          echo ""
-          echo "Link succeeded."
-
-          echo ""
-          echo "Executable:"
           file "$TEST_DIR/angle-link-test"
 
+          if ! file "$TEST_DIR/angle-link-test" |
+              grep -Eqi 'Mach-O.*arm64'; then
+            echo "ERROR: link test did not produce arm64 Mach-O."
+            exit 1
+          fi
+
           echo ""
-          echo "Mach-O header:"
-          xcrun --sdk iphoneos \
-            otool -hv \
-            "$TEST_DIR/angle-link-test"
+          echo "ANGLE Apple clang link test PASSED."
 
       # ============================================================
-      # 17. PREPARE ARTIFACTS
+      # Final archive report
       # ============================================================
 
-      - name: Prepare ANGLE Artifacts
+      - name: Final ANGLE report
         shell: bash
         run: |
           set -euo pipefail
 
-          EGL="$OUT_DIR/obj/libEGL_static.a"
-          GLES="$OUT_DIR/obj/libGLESv2_static.a"
-
-          rm -rf "$ARTIFACT_DIR"
-
-          mkdir -p \
-            "$ARTIFACT_DIR/lib" \
-            "$ARTIFACT_DIR/include"
-
-          cp \
-            "$EGL" \
-            "$ARTIFACT_DIR/lib/libEGL_static.a"
-
-          cp \
-            "$GLES" \
-            "$ARTIFACT_DIR/lib/libGLESv2_static.a"
-
-          # Copy the ANGLE public headers.
-          cp -R \
-            "$ANGLE_DIR/include/" \
-            "$ARTIFACT_DIR/include/"
-
-          # Also provide revision information.
-          git -C "$ANGLE_DIR" rev-parse HEAD \
-            > "$ARTIFACT_DIR/ANGLE_COMMIT.txt"
-
-          git -C "$ANGLE_DIR" log -1 --oneline \
-            >> "$ARTIFACT_DIR/ANGLE_COMMIT.txt"
+          EGL="$GITHUB_WORKSPACE/Native/ANGLE/lib/libEGL.a"
+          GLES="$GITHUB_WORKSPACE/Native/ANGLE/lib/libGLESv2.a"
 
           echo ""
-          echo "ANGLE artifacts:"
-          find "$ARTIFACT_DIR" \
-            -type f \
-            -maxdepth 3 \
-            -print \
-            -exec ls -lh {} \;
-
-      # ============================================================
-      # 18. FINAL ARTIFACT VALIDATION
-      # ============================================================
-
-      - name: Final Artifact Validation
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          EGL="$ARTIFACT_DIR/lib/libEGL_static.a"
-          GLES="$ARTIFACT_DIR/lib/libGLESv2_static.a"
-
-          test -f "$EGL"
-          test -f "$GLES"
-
           echo "=================================================="
-          echo "FINAL ANGLE iOS ARM64 STATIC LIBRARIES"
+          echo "FINAL ANGLE IOS ARM64 STATIC LIBRARIES"
           echo "=================================================="
 
-          echo ""
-          echo "libEGL_static.a:"
           ls -lh "$EGL"
-          file "$EGL"
-
-          echo ""
-          echo "libGLESv2_static.a:"
           ls -lh "$GLES"
-          file "$GLES"
+
+          echo ""
+          echo "libEGL.a:"
+          /usr/bin/ar -t "$EGL" |
+            grep -v '^__.SYMDEF' |
+            wc -l
+
+          echo ""
+          echo "libGLESv2.a:"
+          /usr/bin/ar -t "$GLES" |
+            grep -v '^__.SYMDEF' |
+            wc -l
 
           echo ""
           echo "=================================================="
-          echo "FINAL RESULT"
+          echo "ANGLE IOS ARM64 STATIC LIBRARIES PASSED"
           echo "=================================================="
 
-          echo "ANGLE iOS ARM64 Metal static libraries are ready."
-          echo ""
-          echo "Libraries:"
-          echo "  lib/libEGL_static.a"
-          echo "  lib/libGLESv2_static.a"
-          echo ""
-          echo "Headers:"
-          echo "  include/"
-
       # ============================================================
-      # 19. UPLOAD
+      # Upload
       # ============================================================
 
-      - name: Upload ANGLE iOS ARM64
+      - name: Upload ANGLE libraries
         uses: actions/upload-artifact@v7
         with:
-          name: angle-ios-arm64-metal-static
-          path: angle-artifacts/
+          name: angle-ios-arm64-static-libs
+          path: Native/ANGLE/lib/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
