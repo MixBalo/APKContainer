@@ -68,9 +68,9 @@ targets:
         # ANGLE libraries are now committed in Native/ANGLE/lib/
         # Software GLES (swgl.cpp) is the fallback renderer.
         OTHER_LDFLAGS: >
-          $(inherited)
-          -force_load $(SRCROOT)/Native/ANGLE/lib/libEGL.a
-          -force_load $(SRCROOT)/Native/ANGLE/lib/libGLESv2.a
+         # $(inherited)
+         # -force_load $(SRCROOT)/Native/ANGLE/lib/libEGL.a
+         # -force_load $(SRCROOT)/Native/ANGLE/lib/libGLESv2.a
     dependencies:
       - sdk: Metal.framework
       - sdk: MetalKit.framework
