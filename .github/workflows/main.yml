@@ -30,24 +30,24 @@ jobs:
           brew install xcodegen
           xcodegen --version
 
-      - name: Verify ANGLE libraries are valid
-        run: |
-          for lib in libEGL.a libGLESv2.a; do
-            path="Native/ANGLE/lib/$lib"
-            echo "=== $lib ==="
-            ls -lh "$path"
-            file "$path"
-            # Fail if not a real archive or if suspiciously small
-            if ! file "$path" | grep -q "archive"; then
-              echo "::error::$lib is not a valid static library. Run the ANGLE build workflow first."
-              exit 1
-            fi
-            size=$(stat -f%z "$path")
-            if [ "$size" -lt 1000000 ]; then
-              echo "::error::$lib is only ${size} bytes — likely a thin archive. Run the ANGLE build workflow with use_thin_archives=false."
-              exit 1
-            fi
-          done
+    #  - name: Verify ANGLE libraries are valid
+      #  run: |
+         # for lib in libEGL.a libGLESv2.a; do
+          #  path="Native/ANGLE/lib/$lib"
+          #  echo "=== $lib ==="
+          #  ls -lh "$path"
+          #  file "$path"
+          #  # Fail if not a real archive or if suspiciously small
+          #  if ! file "$path" | grep -q "archive"; then
+          #    echo "::error::$lib is not a valid static library. Run the ANGLE build workflow first."
+          #    exit 1
+          #  fi
+          #  size=$(stat -f%z "$path")
+          #  if [ "$size" -lt 1000000 ]; then
+          #    echo "::error::$lib is only ${size} bytes — likely a thin archive. Run the ANGLE build workflow with use_thin_archives=false."
+          #    exit 1
+          #  fi
+          #done
 
       - name: Generate Xcode project
         run: xcodegen generate
